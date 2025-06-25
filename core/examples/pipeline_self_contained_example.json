@@ -1,0 +1,57 @@
+{
+    "name": "Self-Contained Docker Pipeline",
+    "version": "1.0.0",
+    "description": "A pipeline that creates and builds its own simple Docker application",
+    "variables": {
+        "APP_NAME": "simple-web-app",
+        "TAG": "latest",
+        "PORT": "3000"
+    },
+    "steps": [
+        {
+            "name": "Setup Build Directory",
+            "description": "Create a temporary build directory",
+            "command": "mkdir -p /tmp/build-${APP_NAME}",
+            "timeout": 30
+        },
+        {
+            "name": "Create Simple Web App",
+            "description": "Create a simple Python web application",
+            "command": "cd /tmp/build-${APP_NAME} && echo 'from http.server import HTTPServer, BaseHTTPRequestHandler' > app.py && echo 'import json' >> app.py && echo 'class SimpleHandler(BaseHTTPRequestHandler):' >> app.py && echo '    def do_GET(self):' >> app.py && echo '        self.send_response(200)' >> app.py && echo '        self.send_header(\"Content-type\", \"application/json\")' >> app.py && echo '        self.end_headers()' >> app.py && echo '        response = {\"message\": \"Hello from ${APP_NAME}!\", \"status\": \"running\"}' >> app.py && echo '        self.wfile.write(json.dumps(response).encode())' >> app.py && echo 'if __name__ == \"__main__\":' >> app.py && echo '    server = HTTPServer((\"0.0.0.0\", ${PORT}), SimpleHandler)' >> app.py && echo '    print(\"Server running on port ${PORT}\")' >> app.py && echo '    server.serve_forever()' >> app.py",
+            "timeout": 30
+        },
+        {
+            "name": "Create Dockerfile",
+            "description": "Create a Dockerfile for the application",
+            "command": "cd /tmp/build-${APP_NAME} && echo 'FROM python:3.11-slim' > Dockerfile && echo 'WORKDIR /app' >> Dockerfile && echo 'COPY app.py .' >> Dockerfile && echo 'EXPOSE ${PORT}' >> Dockerfile && echo 'CMD [\"python\", \"app.py\"]' >> Dockerfile",
+            "timeout": 30
+        },
+        {
+            "name": "Build Docker Image",
+            "description": "Build the Docker image",
+            "command": "cd /tmp/build-${APP_NAME} && docker build -t ${APP_NAME}:${TAG} .",
+            "timeout": 120,
+            "retry_count": 1
+        },
+        {
+            "name": "Test Image",
+            "description": "Test that the image was built successfully",
+            "command": "docker images ${APP_NAME}:${TAG} && echo 'Image built successfully!'",
+            "timeout": 30
+        },
+        {
+            "name": "Run Container Test",
+            "description": "Start container briefly to test it works",
+            "command": "docker run -d --name test-${APP_NAME} -p 8888:${PORT} ${APP_NAME}:${TAG} && sleep 3 && docker logs test-${APP_NAME} && docker stop test-${APP_NAME} && docker rm test-${APP_NAME}",
+            "timeout": 60,
+            "continue_on_error": true
+        },
+        {
+            "name": "Cleanup",
+            "description": "Clean up temporary files and test containers",
+            "command": "rm -rf /tmp/build-${APP_NAME} && docker rmi ${APP_NAME}:${TAG} || true && echo 'Cleanup completed'",
+            "timeout": 60,
+            "continue_on_error": true
+        }
+    ]
+} 

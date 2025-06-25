@@ -1,0 +1,28 @@
+{
+    "name": "Test Runs Pipeline",
+    "version": "1.0.0",
+    "description": "A simple pipeline to test the new run functionality",
+    "variables": {
+        "TEST_VAR": "Hello from run"
+    },
+    "steps": [
+        {
+            "name": "Test Step 1",
+            "description": "First test step",
+            "command": "echo 'Step 1: ${TEST_VAR}' && sleep 1",
+            "timeout": 30
+        },
+        {
+            "name": "Test Step 2", 
+            "description": "Second test step",
+            "command": "echo 'Step 2: Current time is '$(date)",
+            "timeout": 30
+        },
+        {
+            "name": "Test Step 3",
+            "description": "Third test step", 
+            "command": "echo 'Step 3: Run ID simulation' && echo 'This is run specific data'",
+            "timeout": 30
+        }
+    ]
+} 

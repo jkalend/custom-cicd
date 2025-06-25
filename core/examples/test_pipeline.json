@@ -1,0 +1,15 @@
+{
+    "name": "Test Persistence Pipeline",
+    "version": "1.0.0",
+    "description": "Test if persistence works between API and CLI",
+    "variables": {
+        "TEST_VAR": "persistence_test"
+    },
+    "steps": [
+        {
+            "name": "Echo Test",
+            "command": "echo 'Testing persistence: ${TEST_VAR}'",
+            "timeout": 30
+        }
+    ]
+} 

@@ -1,0 +1,49 @@
+{
+    "name": "Simple Test Pipeline",
+    "version": "1.0.0",
+    "description": "A simple pipeline for testing the CI/CD agent without external dependencies",
+    "variables": {
+        "PROJECT_NAME": "test-project",
+        "VERSION": "1.0.0",
+        "BUILD_NUMBER": "001"
+    },
+    "steps": [
+        {
+            "name": "Environment Check",
+            "description": "Check the environment and available tools",
+            "command": "echo 'Environment: '$(uname -a) && echo 'Docker version: '$(docker --version) && echo 'Current directory: '$(pwd)",
+            "timeout": 30
+        },
+        {
+            "name": "Variable Test",
+            "description": "Test variable substitution",
+            "command": "echo 'Building ${PROJECT_NAME} version ${VERSION} build ${BUILD_NUMBER}'",
+            "timeout": 30
+        },
+        {
+            "name": "File Operations",
+            "description": "Create and manipulate test files",
+            "command": "mkdir -p /tmp/test-${BUILD_NUMBER} && echo 'Hello from ${PROJECT_NAME}' > /tmp/test-${BUILD_NUMBER}/test.txt && cat /tmp/test-${BUILD_NUMBER}/test.txt",
+            "timeout": 30
+        },
+        {
+            "name": "Simulated Build",
+            "description": "Simulate a build process with some delay",
+            "command": "echo 'Starting build...' && sleep 2 && echo 'Compiling sources...' && sleep 1 && echo 'Build completed successfully!'",
+            "timeout": 60
+        },
+        {
+            "name": "Simulated Tests",
+            "description": "Simulate running tests",
+            "command": "echo 'Running unit tests...' && sleep 1 && echo 'Running integration tests...' && sleep 1 && echo 'All tests passed!'",
+            "timeout": 60
+        },
+        {
+            "name": "Cleanup",
+            "description": "Clean up test files",
+            "command": "rm -rf /tmp/test-${BUILD_NUMBER} && echo 'Cleanup completed'",
+            "timeout": 30,
+            "continue_on_error": true
+        }
+    ]
+} 

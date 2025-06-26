@@ -1,42 +1,29 @@
 FROM python:3.11-slim
 
+# Set working directory
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    curl \
-    git \
-    docker.io \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# Create data and logs directories
+RUN mkdir -p /app/data /app/logs
 
-RUN mkdir -p /app/logs
-
+# Copy requirements and install dependencies
 COPY requirements.txt .
-
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY agent.py .
-COPY api.py .
-COPY cli.py .
-# COPY pipeline_example.json .
+# Copy application files
+COPY . .
 
-RUN chmod +x cli.py
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+RUN chown -R appuser:appuser /app
+USER appuser
 
-# Create a startup script
-RUN echo '#!/bin/bash\n\
-# Start the API server\n\
-python api.py &\n\
-\n\
-# Keep container running\n\
-wait' > /app/start.sh && chmod +x /app/start.sh
+# Expose port
+EXPOSE 8000
 
-EXPOSE 8080
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
 
-ENV PORT=8080
-ENV DEBUG=false
-ENV PYTHONPATH=/app
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
-
-CMD ["/app/start.sh"] 
+# Start the application
+CMD ["python", "backend_api.py"] 

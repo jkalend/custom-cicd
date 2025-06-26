@@ -6,12 +6,17 @@ import time
 import datetime
 import subprocess
 import threading
+import traceback
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from enum import Enum
 import uuid
 import pickle
-import fcntl #FIXME Doesn't work on windows
+try:
+    import fcntl  # Unix only - for file locking
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False  # Windows doesn't have fcntl
 
 class PipelineStatus(Enum):
     PENDING = "pending"
@@ -29,12 +34,21 @@ class StepStatus(Enum):
 
 def setup_logging():
     """Setup logging configuration"""
+    # Determine log file path
+    if os.path.exists('/app'):
+        log_file = '/app/logs/agent.log'
+    else:
+        # For local development
+        log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, 'agent.log')
+    
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s\n',
         handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler('/app/logs/agent.log', mode='a')
+            logging.StreamHandler(sys.stderr),  # Changed to stderr to avoid polluting stdout JSON
+            logging.FileHandler(log_file, mode='a')
         ]
     )
     return logging.getLogger(__name__)
@@ -173,7 +187,14 @@ class PipelineRun:
         }
 
 class CICDAgent:
-    def __init__(self, data_file='/app/data/agent_data.pkl'):
+    def __init__(self, data_file=None):
+        if data_file is None:
+            # Default paths for different environments
+            if os.path.exists('/app'):
+                data_file = '/app/data/agent_data.pkl'
+            else:
+                # For local development
+                data_file = os.path.join(os.path.dirname(__file__), 'data', 'agent_data.pkl')
         self.data_file = data_file
         self.pipelines = {}
         self.runs = {}
@@ -194,9 +215,11 @@ class CICDAgent:
         try:
             if os.path.exists(self.data_file):
                 with open(self.data_file, 'rb') as f:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                    if HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_SH)
                     data = pickle.load(f)
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    if HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
                     
                     self.pipelines = data.get('pipelines', {})
                     
@@ -242,9 +265,11 @@ class CICDAgent:
             }
             
             with open(self.data_file, 'wb') as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                if HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 pickle.dump(data, f)
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                if HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
                 
             logger.debug(f"Saved {len(serializable_pipelines)} pipelines to {self.data_file}")
             
@@ -330,13 +355,48 @@ class CICDAgent:
         run_id = self.create_run(pipeline_id)
         
         if background:
-            thread = threading.Thread(target=self._execute_run, args=(run_id,))
-            thread.daemon = True
-            thread.start()
-            return run_id
+            # Start execution as a separate subprocess to survive script exit
+            try:
+                import subprocess
+                import sys
+                import os
+                
+                # Create a subprocess that will execute the run independently  
+                subprocess.Popen([
+                    sys.executable, 'agent_interface.py', 'execute_run', 
+                    json.dumps({'run_id': run_id})
+                ], 
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True  # Detach from parent process
+                )
+                logger.info(f"Started background execution subprocess for run {run_id}")
+                return run_id
+            except Exception as e:
+                logger.error(f"Failed to start background execution for run {run_id}: {e}")
+                # Fall back to synchronous execution
+                success = self._execute_run(run_id)
+                return run_id if success else None
         else:
             success = self._execute_run(run_id)
             return run_id if success else None
+            
+    def _execute_run_wrapper(self, run_id: str):
+        """Wrapper for _execute_run to handle exceptions in background threads"""
+        logger.info(f"Background thread started for run {run_id}")
+        try:
+            self._execute_run(run_id)
+            logger.info(f"Background thread completed for run {run_id}")
+        except Exception as e:
+            logger.error(f"Background execution failed for run {run_id}: {str(e)}")
+            logger.error(traceback.format_exc())
+            # Update run status to failed if exception occurs
+            if run_id in self.runs:
+                self.runs[run_id].status = PipelineStatus.FAILED
+                self.runs[run_id].finished_at = datetime.datetime.now().isoformat()
+                self._move_run_to_history(self.runs[run_id])
+                self._save_data()
     
     def _execute_run(self, run_id: str) -> bool:
         """Execute a pipeline run"""

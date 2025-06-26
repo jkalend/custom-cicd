@@ -22,18 +22,18 @@ build:
 	@echo "🔨 Building CI/CD Agent..."
 	docker-compose build cicd-agent
 
-# Run the agent
+# Run the application (frontend + backend)
 run:
-	@echo "🚀 Starting CI/CD Agent..."
-	docker-compose up -d cicd-agent
-	@echo "✅ Agent started!"
-	@echo "🌐 Web Dashboard: http://localhost:8080"
-	@echo "🖥️  CLI Access: make cli"
+	@echo "🚀 Starting CI/CD Application..."
+	cd .. && docker-compose up -d
+	@echo "✅ Application started!"
+	@echo "🌐 Frontend: http://localhost:3000"
+	@echo "📊 Backend: Internal (proxied through Next.js API routes)"
 
-# Stop the agent
+# Stop the application
 stop:
-	@echo "🛑 Stopping CI/CD Agent..."
-	docker-compose down
+	@echo "🛑 Stopping CI/CD Application..."
+	cd .. && docker-compose down
 
 # View logs
 logs:

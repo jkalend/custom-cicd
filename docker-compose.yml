@@ -1,0 +1,58 @@
+services:
+  backend:
+    build: 
+      context: ./core
+      dockerfile: Dockerfile
+    container_name: cicd-backend
+    expose:
+      - "8000"
+    environment:
+      - PORT=8000
+      - DEBUG=false
+      - PYTHONPATH=/app
+    volumes:
+      - backend_data:/app/data
+      - backend_logs:/app/logs
+    networks:
+      - cicd-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./core/frontend
+      dockerfile: Dockerfile
+    container_name: cicd-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - cicd-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  cicd-network:
+    driver: bridge
+    name: cicd-network
+
+volumes:
+  backend_data:
+    name: cicd-backend-data
+  backend_logs:
+    name: cicd-backend-logs

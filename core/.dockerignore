@@ -1,0 +1,53 @@
+# Development files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache/
+.coverage
+.venv/
+venv/
+env/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Logs and data (these should be volumes)
+logs/
+data/
+*.log
+
+# Frontend directory (not needed in backend container)
+frontend/
+
+# Docker files
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Documentation
+README.md
+*.md
+
+# Example files
+*example*
+*.json.example
+
+# Temporary files
+tmp/
+temp/
+.tmp/ 

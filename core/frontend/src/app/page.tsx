@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { 
   RocketLaunchIcon, 
   ClipboardDocumentListIcon,
@@ -18,6 +19,7 @@ import { apiClient } from '@/lib/api';
 import { formatDate, formatDuration, formatRelativeTime, defaultPipelineTemplate } from '@/lib/utils';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { LogViewer, useLogs } from '@/components/ui/log-viewer';
+import { Pagination } from '@/components/ui/pagination';
 
 export default function Dashboard() {
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
@@ -25,8 +27,25 @@ export default function Dashboard() {
   const [pipelineJson, setPipelineJson] = useState(JSON.stringify(defaultPipelineTemplate, null, 2));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pipelinePage, setPipelinePage] = useState(1);
+  const [runsPage, setRunsPage] = useState(1);
+  const router = useRouter();
   
   const { logs, addLog, clearLogs } = useLogs();
+  
+  // Pagination settings
+  const ITEMS_PER_PAGE = 5;
+  
+  // Calculate paginated data
+  const paginatedPipelines = pipelines.slice(
+    (pipelinePage - 1) * ITEMS_PER_PAGE,
+    pipelinePage * ITEMS_PER_PAGE
+  );
+  
+  const paginatedRuns = runs.slice(
+    (runsPage - 1) * ITEMS_PER_PAGE,
+    runsPage * ITEMS_PER_PAGE
+  );
 
   // Auto-refresh every 5 seconds
   useEffect(() => {
@@ -127,44 +146,12 @@ export default function Dashboard() {
     }
   };
 
-  const showPipelineDetails = async (pipelineId: string) => {
-    try {
-      const pipeline = await apiClient.getPipeline(pipelineId);
-      addLog(`📋 Pipeline Details: ${pipeline.name}`, 'info');
-      addLog(`Status: ${pipeline.status}`, 'info');
-      addLog(`Steps:`, 'info');
-      pipeline.steps.forEach(step => {
-        addLog(`  - ${step.name}: ${step.status || 'not run'}`, 'info');
-        if (step.output) addLog(`    Output: ${step.output}`, 'info');
-        if (step.error) addLog(`    Error: ${step.error}`, 'error');
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load pipeline details';
-      addLog(`❌ Error loading pipeline details: ${message}`, 'error');
-    }
+  const showPipelineDetails = (pipelineId: string) => {
+    // Navigate to the pipeline details page
+    router.push(`/pipeline/${pipelineId}`);
   };
 
-  const showPipelineRuns = async (pipelineId: string) => {
-    try {
-      const runsData = await apiClient.listRuns(pipelineId);
-      const runs = Array.isArray(runsData) ? runsData : [];
-      addLog(`🏃 Runs for pipeline ${pipelineId}:`, 'info');
-      if (runs.length === 0) {
-        addLog('No runs found for this pipeline.', 'info');
-        return;
-      }
-      runs.forEach(run => {
-        addLog(`${run.name} [${run.status}] - Run ID: ${run.id}`, 'info');
-        addLog(`   Created: ${run.created_at}`, 'info');
-        if (run.started_at) addLog(`   Started: ${run.started_at}`, 'info');
-        if (run.finished_at) addLog(`   Finished: ${run.finished_at}`, 'info');
-        if (run.total_duration) addLog(`   Duration: ${formatDuration(run.total_duration)}`, 'info');
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load pipeline runs';
-      addLog(`❌ Error loading pipeline runs: ${message}`, 'error');
-    }
-  };
+
 
   const cancelRun = async (runId: string) => {
     try {
@@ -219,7 +206,7 @@ export default function Dashboard() {
           <textarea
             value={pipelineJson}
             onChange={(e) => setPipelineJson(e.target.value)}
-            className="w-full h-64 p-3 border border-gray-300 rounded-lg font-mono text-sm text-black"
+            className="w-full h-64 p-3 border border-gray-300 rounded-lg font-mono text-sm text-gray-900"
             placeholder="Paste your pipeline JSON here..."
           />
           
@@ -247,7 +234,7 @@ export default function Dashboard() {
           {/* Pipelines */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-gray-900">📊 Pipelines</h2>
+              <h2 className="text-xl font-semibold text-gray-900">📊 Pipelines ({pipelines.length})</h2>
               <button
                 onClick={loadData}
                 className="flex items-center gap-2 text-blue-600 hover:text-blue-700"
@@ -260,64 +247,67 @@ export default function Dashboard() {
             {pipelines.length === 0 ? (
               <p className="text-gray-700">No pipelines found.</p>
             ) : (
-              <div className="space-y-4">
-                {pipelines.map((pipeline) => (
-                  <div key={pipeline.id} className="border-l-4 border-blue-500 pl-4 p-3 bg-gray-50 rounded">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-medium text-gray-900">{pipeline.name}</h3>
-                      <StatusBadge status={pipeline.status} />
+              <>
+                <div className="space-y-4 mb-4">
+                  {paginatedPipelines.map((pipeline) => (
+                    <div key={pipeline.id} className="border-l-4 border-blue-500 pl-4 p-3 bg-gray-50 rounded">
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="font-medium text-gray-900">{pipeline.name}</h3>
+                        <StatusBadge status={pipeline.status} />
+                      </div>
+                      
+                      <div className="text-sm text-gray-800 space-y-1">
+                        <p><strong className="text-gray-900">ID:</strong> {pipeline.id}</p>
+                        <p><strong className="text-gray-900">Description:</strong> {pipeline.description || 'No description'}</p>
+                        <p><strong className="text-gray-900">Created:</strong> {formatRelativeTime(pipeline.created_at)}</p>
+                        <p><strong className="text-gray-900">Active Runs:</strong> {pipeline.active_runs || 0}</p>
+                        <p><strong className="text-gray-900">Total Runs:</strong> {pipeline.total_runs || 0}</p>
+                      </div>
+                      
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        <button
+                          onClick={() => runPipeline(pipeline.id)}
+                          className="text-xs bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded"
+                        >
+                          ▶️ Run
+                        </button>
+                        <button
+                          onClick={() => showPipelineDetails(pipeline.id)}
+                          className="text-xs bg-yellow-600 hover:bg-yellow-700 text-white px-2 py-1 rounded"
+                        >
+                          👁️ View Details & Runs
+                        </button>
+                        <button
+                          onClick={() => cancelPipeline(pipeline.id)}
+                          className="text-xs bg-gray-600 hover:bg-gray-700 text-white px-2 py-1 rounded"
+                        >
+                          🛑 Cancel
+                        </button>
+                        <button
+                          onClick={() => deletePipeline(pipeline.id)}
+                          className="text-xs bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded"
+                        >
+                          🗑️ Delete
+                        </button>
+                      </div>
                     </div>
-                    
-                    <div className="text-sm text-gray-800 space-y-1">
-                      <p><strong className="text-gray-900">ID:</strong> {pipeline.id}</p>
-                      <p><strong className="text-gray-900">Description:</strong> {pipeline.description || 'No description'}</p>
-                      <p><strong className="text-gray-900">Created:</strong> {formatRelativeTime(pipeline.created_at)}</p>
-                      <p><strong className="text-gray-900">Active Runs:</strong> {pipeline.active_runs || 0}</p>
-                      <p><strong className="text-gray-900">Total Runs:</strong> {pipeline.total_runs || 0}</p>
-                    </div>
-                    
-                    <div className="flex flex-wrap gap-2 mt-3">
-                      <button
-                        onClick={() => runPipeline(pipeline.id)}
-                        className="text-xs bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded"
-                      >
-                        ▶️ Run
-                      </button>
-                      <button
-                        onClick={() => showPipelineDetails(pipeline.id)}
-                        className="text-xs bg-yellow-600 hover:bg-yellow-700 text-white px-2 py-1 rounded"
-                      >
-                        📋 Details
-                      </button>
-                      <button
-                        onClick={() => showPipelineRuns(pipeline.id)}
-                        className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
-                      >
-                        🏃 Runs
-                      </button>
-                      <button
-                        onClick={() => cancelPipeline(pipeline.id)}
-                        className="text-xs bg-gray-600 hover:bg-gray-700 text-white px-2 py-1 rounded"
-                      >
-                        🛑 Cancel
-                      </button>
-                      <button
-                        onClick={() => deletePipeline(pipeline.id)}
-                        className="text-xs bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded"
-                      >
-                        🗑️ Delete
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+                
+                <Pagination
+                  currentPage={pipelinePage}
+                  totalItems={pipelines.length}
+                  itemsPerPage={ITEMS_PER_PAGE}
+                  onPageChange={setPipelinePage}
+                />
+              </>
             )}
           </div>
 
           {/* Runs */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-gray-900">🏃 Pipeline Runs</h2>
+              <h2 className="text-xl font-semibold text-gray-900">🏃 Pipeline Runs ({runs.length})</h2>
               <button
                 onClick={loadData}
                 className="flex items-center gap-2 text-blue-600 hover:text-blue-700"
@@ -330,42 +320,62 @@ export default function Dashboard() {
             {runs.length === 0 ? (
               <p className="text-gray-700">No runs found.</p>
             ) : (
-              <div className="space-y-4">
-                {runs.slice(0, 10).map((run) => (
-                  <div key={run.id} className="border-l-4 border-green-500 pl-4 p-3 bg-gray-50 rounded">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-medium text-sm text-gray-900">{run.name}</h4>
-                      <StatusBadge status={run.status} />
-                    </div>
-                    
-                    <div className="text-xs text-gray-800 space-y-1">
-                      <p><strong className="text-gray-900">Run ID:</strong> {run.id.slice(0, 8)}...</p>
-                      <p><strong className="text-gray-900">Pipeline:</strong> {run.pipeline_id.slice(0, 8)}...</p>
-                      <p><strong className="text-gray-900">Created:</strong> {formatRelativeTime(run.created_at)}</p>
-                      {run.total_duration && (
-                        <p><strong className="text-gray-900">Duration:</strong> {formatDuration(run.total_duration)}</p>
-                      )}
-                    </div>
-                    
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {run.status === 'running' && (
+              <>
+                <div className="space-y-4 mb-4">
+                  {paginatedRuns.map((run) => (
+                    <div key={run.id} className="border-l-4 border-green-500 pl-4 p-3 bg-gray-50 rounded">
+                      <div className="flex items-center justify-between mb-2">
                         <button
-                          onClick={() => cancelRun(run.id)}
-                          className="text-xs bg-gray-600 hover:bg-gray-700 text-white px-2 py-1 rounded"
+                          onClick={() => router.push(`/run/${run.id}`)}
+                          className="font-medium text-sm text-gray-900 hover:text-blue-600 text-left"
                         >
-                          🛑 Cancel
+                          {run.name}
                         </button>
-                      )}
-                      <button
-                        onClick={() => deleteRun(run.id)}
-                        className="text-xs bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded"
-                      >
-                        🗑️ Delete
-                      </button>
+                        <StatusBadge status={run.status} />
+                      </div>
+                      
+                      <div className="text-xs text-gray-800 space-y-1">
+                        <p><strong className="text-gray-900">Run ID:</strong> {run.id.slice(0, 8)}...</p>
+                        <p><strong className="text-gray-900">Pipeline:</strong> {run.pipeline_id.slice(0, 8)}...</p>
+                        <p><strong className="text-gray-900">Created:</strong> {formatRelativeTime(run.created_at)}</p>
+                        {run.total_duration && (
+                          <p><strong className="text-gray-900">Duration:</strong> {formatDuration(run.total_duration)}</p>
+                        )}
+                      </div>
+                      
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        <button
+                          onClick={() => router.push(`/run/${run.id}`)}
+                          className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
+                        >
+                          👁️ View Details
+                        </button>
+                        {run.status === 'running' && (
+                          <button
+                            onClick={() => cancelRun(run.id)}
+                            className="text-xs bg-gray-600 hover:bg-gray-700 text-white px-2 py-1 rounded"
+                          >
+                            🛑 Cancel
+                          </button>
+                        )}
+                        <button
+                          onClick={() => deleteRun(run.id)}
+                          className="text-xs bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded"
+                        >
+                          🗑️ Delete
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+                
+                <Pagination
+                  currentPage={runsPage}
+                  totalItems={runs.length}
+                  itemsPerPage={ITEMS_PER_PAGE}
+                  onPageChange={setRunsPage}
+                />
+              </>
             )}
           </div>
         </div>

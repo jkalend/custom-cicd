@@ -5,9 +5,13 @@ export interface PipelineStep {
   description: string;
   command: string;
   timeout: number;
+  retry_count?: number;
+  continue_on_error?: boolean;
   status?: PipelineStatus;
   output?: string;
   error?: string;
+  start_time?: string;
+  end_time?: string;
 }
 
 export interface Pipeline {

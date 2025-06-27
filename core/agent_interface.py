@@ -9,30 +9,24 @@ import json
 import traceback
 import logging
 
-# Configure logging BEFORE importing agent to prevent stdout pollution
-# Clear any existing handlers first
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)
 
-# Set up clean logging configuration  
 logging.basicConfig(
-    level=logging.ERROR,  # Only show errors 
-    stream=sys.stderr,    # Send to stderr instead of stdout
+    level=logging.ERROR,  
+    stream=sys.stderr,    
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-# Disable all existing loggers that might interfere
 logging.getLogger().handlers.clear()
 logging.getLogger().setLevel(logging.ERROR)
 
-# Set up stderr-only handler
 stderr_handler = logging.StreamHandler(sys.stderr)
 stderr_handler.setLevel(logging.ERROR)
 logging.getLogger().addHandler(stderr_handler)
 
 logger = logging.getLogger(__name__)
 
-# Import agent AFTER logging configuration
 from agent import agent
 
 def handle_command(command, args=None):

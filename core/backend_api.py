@@ -6,29 +6,25 @@ Provides REST endpoints for the CI/CD pipeline agent.
 import json
 import logging
 import subprocess
-import sys
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
+from http import HTTPStatus
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend communication
+CORS(app)
 
 def execute_agent_command(command, **kwargs):
     """Execute agent interface command and return JSON response."""
     try:
-        # Build command arguments
         cmd = ['python', 'agent_interface.py', command]
         
-        # Add any additional arguments as JSON
         if kwargs:
             cmd.append(json.dumps(kwargs))
         
-        # Execute command
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -39,14 +35,13 @@ def execute_agent_command(command, **kwargs):
         
         if result.returncode != 0:
             logger.error(f"Command failed: {result.stderr}")
-            return {'error': result.stderr}, 500
+            return {'error': result.stderr}, HTTPStatus.INTERNAL_SERVER_ERROR
         
-        # Parse JSON response - extract only JSON part from output
+        # Parse JSON response - extract only JSON part from output (if agent by any change produce additional stdout)
         try:
             stdout = result.stdout.strip()
             
             # Find the JSON object by looking for balanced braces
-            # Start from the first '{' and find its matching '}'
             json_start = stdout.find('{')
             if json_start != -1:
                 brace_count = 0
@@ -63,22 +58,22 @@ def execute_agent_command(command, **kwargs):
                 
                 if brace_count == 0:
                     json_part = stdout[json_start:json_end]
-                    return json.loads(json_part), 200
+                    return json.loads(json_part), HTTPStatus.OK
             
             # If extraction fails, try to parse the entire stdout
-            return json.loads(stdout), 200
+            return json.loads(stdout), HTTPStatus.OK
                 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {e}")
             logger.error(f"Raw stdout (first 200 chars): {repr(result.stdout[:200])}")
-            return {'error': 'Invalid JSON response from agent'}, 500
+            return {'error': 'Invalid JSON response from agent'}, HTTPStatus.INTERNAL_SERVER_ERROR
             
     except subprocess.TimeoutExpired:
         logger.error("Command timed out")
-        return {'error': 'Command timed out'}, 500
+        return {'error': 'Command timed out'}, HTTPStatus.INTERNAL_SERVER_ERROR
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        return {'error': str(e)}, 500
+        return {'error': str(e)}, HTTPStatus.INTERNAL_SERVER_ERROR
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -97,7 +92,7 @@ def create_pipeline():
     """Create a new pipeline."""
     data = request.get_json()
     if not data:
-        return jsonify({'error': 'No JSON data provided'}), 400
+        return jsonify({'error': 'No JSON data provided'}), HTTPStatus.BAD_REQUEST
     
     response, status = execute_agent_command('create_pipeline', pipeline_config=data)
     return jsonify(response), status
@@ -131,17 +126,15 @@ def create_and_run_pipeline():
     """Create and run a pipeline in one step."""
     data = request.get_json()
     if not data:
-        return jsonify({'error': 'No JSON data provided'}), 400
+        return jsonify({'error': 'No JSON data provided'}), HTTPStatus.BAD_REQUEST
     
-    # First create the pipeline
     create_response, create_status = execute_agent_command('create_pipeline', pipeline_config=data)
-    if create_status != 200:
+    if create_status != HTTPStatus.OK:
         return jsonify(create_response), create_status
     
-    # Then run it
     pipeline_id = create_response.get('data', {}).get('pipeline_id')
     if not pipeline_id:
-        return jsonify({'error': 'Failed to get pipeline ID from creation response'}), 500
+        return jsonify({'error': 'Failed to get pipeline ID from creation response'}), HTTPStatus.INTERNAL_SERVER_ERROR
     
     run_response, run_status = execute_agent_command('run_pipeline', pipeline_id=pipeline_id)
     return jsonify(run_response), run_status
@@ -172,16 +165,16 @@ def cancel_run(run_id):
     response, status = execute_agent_command('cancel_run', run_id=run_id)
     return jsonify(response), status
 
-@app.errorhandler(404)
+@app.errorhandler(HTTPStatus.NOT_FOUND)
 def not_found(error):
     """Handle 404 errors."""
-    return jsonify({'error': 'Endpoint not found'}), 404
+    return jsonify({'error': 'Endpoint not found'}), HTTPStatus.NOT_FOUND
 
-@app.errorhandler(500)
+@app.errorhandler(HTTPStatus.INTERNAL_SERVER_ERROR)
 def internal_error(error):
     """Handle 500 errors."""
     logger.error(f"Internal server error: {error}")
-    return jsonify({'error': 'Internal server error'}), 500
+    return jsonify({'error': 'Internal server error'}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8000))

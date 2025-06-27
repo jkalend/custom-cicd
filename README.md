@@ -1,71 +1,67 @@
-# CI/CD Agent
+# Custom CI/CD Pipeline Manager
 
-A simple containerized CI/CD agent that runs custom pipelines with web and CLI interfaces.
-
-## What it does
-
-- Runs custom pipelines defined in JSON format
-- Provides a web dashboard at http://localhost:8080
-- Includes a command-line interface for automation
-- Supports Docker commands and variable substitution
-- Monitors pipeline execution in real-time
+A simple CI/CD pipeline management system with a web interface and Python backend.
 
 ## Quick Start
 
-1. **Start the agent:**
-   ```bash
-   cd custom-cicd/core
-   docker-compose up -d
-   ```
+### Prerequisites
+- Docker
+- Docker Compose
 
-2. **Use the web interface:**
-   - Open http://localhost:8080
-   - Paste a pipeline JSON and click "Create & Run"
+### Run the Application
 
-3. **Use the CLI:**
-   ```bash
-   # List pipelines
-   docker-compose exec cicd-agent python cli.py list
-   
-   # Run a pipeline
-   docker-compose exec cicd-agent python cli.py create-run pipeline.json
-   ```
+1. Clone and start:
+```bash
+git clone <repository-url>
+cd custom-cicd
+docker-compose up -d
+```
 
-## Pipeline Example
+2. Open your browser:
+- **Frontend**: http://localhost
 
+That's it! 🎉
+
+## Usage
+
+### Create a Pipeline
+1. Open the web interface
+2. Paste your pipeline JSON in the text area
+3. Click "Create & Run"
+
+### Example Pipeline
 ```json
 {
-    "name": "Build and Test",
-    "variables": {
-        "APP_NAME": "my-app"
-    },
-    "steps": [
-        {
-            "name": "Install Dependencies",
-            "command": "npm install"
-        },
-        {
-            "name": "Build",
-            "command": "npm run build"
-        },
-        {
-            "name": "Test",
-            "command": "npm test"
-        }
-    ]
+  "name": "Simple Test",
+  "version": "1.0.0",
+  "description": "A basic test pipeline",
+  "variables": {
+    "PROJECT_NAME": "my-app"
+  },
+  "steps": [
+    {
+      "name": "Say Hello",
+      "command": "echo 'Hello from ${PROJECT_NAME}!'",
+      "timeout": 30
+    }
+  ]
 }
 ```
 
-## Management
+## Features
+
+- 🚀 Web dashboard for pipeline management
+- 📊 Real-time pipeline monitoring
+- 🏃‍♂️ Background job execution
+- 📝 Live log streaming
+- 🔄 Auto-refresh dashboard
+
+## Stop the Application
 
 ```bash
-# View logs
-docker-compose logs -f
-
-# Stop the agent
 docker-compose down
+```
 
-# Restart
-docker-compose restart
-``` 
-or through the provided Makefile
+## License
+
+MIT License

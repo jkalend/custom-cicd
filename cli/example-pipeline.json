@@ -1,0 +1,37 @@
+{
+  "name": "Example Build Pipeline",
+  "steps": [
+    {
+      "name": "Environment Setup",
+      "command": "echo 'Setting up build environment...'"
+    },
+    {
+      "name": "Code Checkout",
+      "command": "echo 'Checking out source code...'"
+    },
+    {
+      "name": "Install Dependencies",
+      "command": "echo 'Installing dependencies...'"
+    },
+    {
+      "name": "Build Application",
+      "command": "echo 'Building application...'"
+    },
+    {
+      "name": "Run Tests",
+      "command": "echo 'Running test suite...'"
+    },
+    {
+      "name": "Security Scan",
+      "command": "echo 'Running security scan...'"
+    },
+    {
+      "name": "Package Artifacts",
+      "command": "echo 'Packaging build artifacts...'"
+    },
+    {
+      "name": "Deploy to Staging",
+      "command": "echo 'Deploying to staging environment...'"
+    }
+  ]
+} 

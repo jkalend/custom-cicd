@@ -183,11 +183,21 @@ export default function Dashboard() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
         <div className="bg-gray-900 text-white rounded-lg p-6 mb-6">
-          <div className="flex items-center gap-3 mb-2">
-            <RocketLaunchIcon className="w-8 h-8" />
-            <h1 className="text-3xl font-bold">CI/CD Agent Dashboard</h1>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 mb-2">
+              <RocketLaunchIcon className="w-8 h-8" />
+              <div>
+                <h1 className="text-3xl font-bold">CI/CD Agent Dashboard</h1>
+                <p className="text-gray-300">Manage and monitor your CI/CD pipelines</p>
+              </div>
+            </div>
+            <a
+              href="/ai"
+              className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
+            >
+              🧠 AI Decision Layer
+            </a>
           </div>
-          <p className="text-gray-300">Manage and monitor your CI/CD pipelines</p>
         </div>
 
         {error && (

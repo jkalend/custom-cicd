@@ -387,6 +387,37 @@ export default function RunDetailsPage({ params }: RunDetailsPageProps) {
                               </div>
                             </div>
                           )}
+
+                          {/* AI analysis (Jev) */}
+                          {step.ai_analysis && (
+                            <div>
+                              <h4 className="text-sm font-medium text-purple-700 mb-2">
+                                🧠 AI Analysis:
+                              </h4>
+                              <div className="bg-purple-50 border border-purple-200 p-3 rounded">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-900">
+                                  <div>
+                                    <span className="font-medium">Failure kind:</span>{' '}
+                                    {step.ai_analysis.classification.kind}
+                                  </div>
+                                  <div>
+                                    <span className="font-medium">Worth retrying:</span>{' '}
+                                    {step.ai_analysis.classification.retri ? 'yes' : 'no'}
+                                    {step.ai_analysis.classification.retry_probability != null &&
+                                      ` (p=${step.ai_analysis.classification.retry_probability.toFixed(2)})`}
+                                  </div>
+                                  <div>
+                                    <span className="font-medium">Log action:</span>{' '}
+                                    {step.ai_analysis.log_triage.action}
+                                  </div>
+                                  <div>
+                                    <span className="font-medium">Page engineer:</span>{' '}
+                                    p={step.ai_analysis.log_triage.page_probability.toFixed(2)}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}

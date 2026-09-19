@@ -1,7 +1,7 @@
 services:
   backend:
-    build: 
-      context: ./core
+    build:
+      context: ./backend
       dockerfile: Dockerfile
     container_name: cicd-backend
     # Only expose internally
@@ -9,24 +9,23 @@ services:
       - "8000"
     environment:
       - PORT=8000
-      - DEBUG=false
-      - PYTHONPATH=/app
+      - DATA_FILE=/app/data/agent_data.json
+      - AI_GATEWAY_API_KEY=${AI_GATEWAY_API_KEY:-}
     volumes:
       - backend_data:/app/data
-      - backend_logs:/app/logs
     networks:
       - cicd-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 10s
 
   frontend:
     build:
-      context: ./core/frontend
+      context: ./frontend
       dockerfile: Dockerfile
     container_name: cicd-frontend
     ports:
@@ -55,5 +54,3 @@ networks:
 volumes:
   backend_data:
     name: cicd-backend-data
-  backend_logs:
-    name: cicd-backend-logs 

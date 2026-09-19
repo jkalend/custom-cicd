@@ -1,87 +1,39 @@
-.PHONY: help build test deploy clean run pipeline docker-compose-up docker-compose-down
+.PHONY: help build run dev clean up down logs backend cli frontend
 
 # Default target
 help:
 	@echo "Available commands:"
-	@echo "  build      - Build Docker images (frontend + backend)"
-	@echo "  test       - Run tests"
-	@echo "  deploy     - Deploy application"
-	@echo "  pipeline   - Run full CI/CD pipeline"
-	@echo "  run        - Run application locally (frontend + backend)"
-	@echo "  clean      - Clean up containers and images"
+	@echo "  build      - Build Go backend + CLI binaries"
+	@echo "  run        - Run backend + frontend locally (no Docker)"
+	@echo "  dev        - Backend (go run) + frontend (next dev)"
+	@echo "  backend    - Run only the Go backend on :8000"
+	@echo "  cli        - Build the Go CLI into cli/cicd"
 	@echo "  up         - Start with docker-compose (frontend + backend)"
 	@echo "  down       - Stop docker-compose"
 	@echo "  logs       - Show container logs"
-	@echo "  frontend   - Open frontend in browser"
+	@echo "  clean      - Clean build artifacts"
 
-# Build the Docker images
 build:
-	@echo "Building Docker images..."
-	docker-compose build --parallel
+	@echo "Building Go backend..."
+	cd backend && go build -o bin/server ./cmd/server
+	@echo "Building Go CLI..."
+	cd cli && go build -o cicd .
 
-# Run tests
-test:
-	@echo "Running tests..."
-	@chmod +x scripts/test.sh
-	@./scripts/test.sh
+backend:
+	cd backend && go run ./cmd/server
 
-# Deploy the application
-deploy:
-	@echo "Deploying application..."
-	@chmod +x scripts/deploy.sh
-	@./scripts/deploy.sh
+cli:
+	cd cli && go build -o cicd .
 
-# Run the full pipeline
-pipeline:
-	@echo "Running CI/CD pipeline..."
-	@chmod +x scripts/pipeline.sh
-	@./scripts/pipeline.sh
+frontend:
+	@echo "Open http://localhost:3000 in your browser"
 
 # Run application locally (without Docker)
-run:
-	@echo "Running application locally..."
-	@echo "Starting backend..."
-	cd core && python backend_api.py &
-	@echo "Starting frontend..."
-	cd core/frontend && npm run dev
+run dev:
+	@echo "Starting backend on :8000..."
+	cd backend && go run ./cmd/server &
+	@echo "Starting frontend on :3000..."
+	cd frontend && BACKEND_URL=http://localhost:8000 npm run dev
 
-# Clean up containers and images
 clean:
-	@echo "Cleaning up..."
-	docker stop custom-cicd-app || true
-	docker rm custom-cicd-app || true
-	docker rmi custom-cicd-app:latest || true
-	docker system prune -f
-
-# Start with docker-compose (frontend + backend)
-up:
-	@echo "Starting frontend and backend containers..."
-	docker-compose up -d
-	@echo "✅ Application started!"
-	@echo "🌐 Frontend: http://localhost:3000"
-	@echo "📊 Backend: Internal (proxied through Next.js API routes)"
-
-# Stop docker-compose
-down:
-	@echo "Stopping all containers..."
-	docker-compose down
-
-# Show container logs
-logs:
-	@echo "Container logs:"
-	docker-compose logs -f
-
-# Open frontend in browser
-frontend:
-	@echo "Opening frontend..."
-	@command -v open >/dev/null 2>&1 && open http://localhost:3000 || \
-	command -v xdg-open >/dev/null 2>&1 && xdg-open http://localhost:3000 || \
-	echo "Please open http://localhost:3000 in your browser"
-
-# Development mode (with auto-reload)
-dev:
-	@echo "Starting development environment..."
-	@echo "Backend: http://localhost:8000"
-	@echo "Frontend: http://localhost:3000"
-	cd core && python backend_api.py &
-	cd core/frontend && npm run dev 
+	rm -rf backend/bin cli/cicd

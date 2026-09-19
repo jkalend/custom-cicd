@@ -316,4 +316,18 @@ storybook-static/
 # CLI build artifacts
 cli/build/
 cli/cicd
+
+# Go
+backend/bin/
+cli/cicd
+cli/cicd.exe
+
+# AI decision logs / runtime data
+backend/data/
+core/data/
+data/*.json
+data/*.jsonl
+
+# Secrets
+backend/.env
 cli/cicd.exe

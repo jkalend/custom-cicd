@@ -1,4 +1,4 @@
-module jev-cicd-backend
+module laya-cicd-backend
 
 go 1.22
 

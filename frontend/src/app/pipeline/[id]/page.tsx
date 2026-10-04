@@ -1,93 +1,63 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { 
-  ArrowLeftIcon,
-  PlayIcon,
-  StopIcon,
-  TrashIcon,
-  ArrowPathIcon,
-  ClockIcon,
-  CalendarIcon,
-  DocumentTextIcon,
-  CogIcon,
-  ChevronRightIcon,
-  ChevronDownIcon,
-  ChevronUpIcon
-} from '@heroicons/react/24/outline';
+import { useCallback, useEffect, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Braces,
+  Clock3,
+  Code2,
+  GitBranch,
+  LoaderCircle,
+  Play,
+  RefreshCw,
+  Square,
+  Trash2,
+} from 'lucide-react';
 
-import { Pipeline, PipelineRun } from '@/types/api';
-import { apiClient } from '@/lib/api';
-import { formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
+import { AppShell } from '@/components/app-shell';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { LogViewer, useLogs } from '@/components/ui/log-viewer';
-import { Pagination } from '@/components/ui/pagination';
+import { apiClient } from '@/lib/api';
+import { formatDuration, formatRelativeTime } from '@/lib/utils';
+import type { Pipeline, PipelineRun } from '@/types/api';
 
-interface PipelineDetailsPageProps {
-  params: { id: string };
-}
-
-export default function PipelineDetailsPage({ params }: PipelineDetailsPageProps) {
+export default function PipelineDetailsPage() {
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
   const [runs, setRuns] = useState<PipelineRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [runsPage, setRunsPage] = useState(1);
-  const [stepsExpanded, setStepsExpanded] = useState(false);
-  const router = useRouter();
-  const { logs, addLog, clearLogs } = useLogs();
-  
-  // Pagination settings
-  const ITEMS_PER_PAGE = 5;
-  
-  // Calculate paginated runs
-  const paginatedRuns = runs.slice(
-    (runsPage - 1) * ITEMS_PER_PAGE,
-    runsPage * ITEMS_PER_PAGE
-  );
 
-  // Auto-refresh every 5 seconds
+  const loadData = useCallback(async () => {
+    const [pipelineResult, runsResult] = await Promise.allSettled([
+      apiClient.getPipeline(id),
+      apiClient.listRuns(id),
+    ]);
+    if (pipelineResult.status === 'fulfilled') setPipeline(pipelineResult.value);
+    if (runsResult.status === 'fulfilled') setRuns(runsResult.value);
+    setError(pipelineResult.status === 'rejected' || runsResult.status === 'rejected'
+      ? 'Part of this pipeline snapshot could not be refreshed.'
+      : null);
+    setLoading(false);
+  }, [id]);
+
   useEffect(() => {
-    const interval = setInterval(() => {
-      loadData();
-    }, 5000);
-
-    // Load initial data
     loadData();
-
-    return () => clearInterval(interval);
-  }, [params.id]);
-
-  const loadData = async () => {
-    try {
-      const [pipelineData, runsData] = await Promise.all([
-        apiClient.getPipeline(params.id),
-        apiClient.listRuns(params.id)
-      ]);
-      
-      setPipeline(pipelineData);
-      setRuns(Array.isArray(runsData) ? runsData : []);
-      setError(null);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load pipeline data';
-      setError(message);
-      addLog(`❌ Error loading pipeline data: ${message}`, 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
+    const interval = window.setInterval(loadData, 5000);
+    return () => window.clearInterval(interval);
+  }, [loadData]);
 
   const runPipeline = async () => {
     if (!pipeline) return;
     try {
-      await apiClient.runPipeline(pipeline.id);
-      addLog(`🚀 Pipeline started: ${pipeline.name}`, 'success');
-      loadData();
+      const result = await apiClient.runPipeline(pipeline.id);
+      router.push(`/run/${result.run_id}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to start pipeline';
-      addLog(`❌ Failed to start pipeline: ${message}`, 'error');
+      setError(err instanceof Error ? err.message : 'Unable to start pipeline.');
     }
   };
 
@@ -95,338 +65,151 @@ export default function PipelineDetailsPage({ params }: PipelineDetailsPageProps
     if (!pipeline) return;
     try {
       await apiClient.cancelPipeline(pipeline.id);
-      addLog(`🛑 Pipeline cancelled: ${pipeline.name}`, 'warning');
-      loadData();
+      await loadData();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to cancel pipeline';
-      addLog(`❌ Failed to cancel pipeline: ${message}`, 'error');
+      setError(err instanceof Error ? err.message : 'Unable to cancel pipeline.');
     }
   };
 
   const deletePipeline = async () => {
-    if (!pipeline) return;
-    if (!confirm(`Are you sure you want to delete pipeline "${pipeline.name}"? This action cannot be undone.`)) {
-      return;
-    }
+    if (!pipeline || !window.confirm(`Delete pipeline “${pipeline.name}”?`)) return;
     try {
       await apiClient.deletePipeline(pipeline.id);
-      addLog(`🗑️ Pipeline deleted: ${pipeline.name}`, 'warning');
       router.push('/');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete pipeline';
-      addLog(`❌ Failed to delete pipeline: ${message}`, 'error');
-    }
-  };
-
-  const cancelRun = async (runId: string) => {
-    try {
-      await apiClient.cancelRun(runId);
-      addLog(`🛑 Run cancelled: ${runId}`, 'warning');
-      loadData();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to cancel run';
-      addLog(`❌ Failed to cancel run: ${message}`, 'error');
-    }
-  };
-
-  const deleteRun = async (runId: string) => {
-    if (!confirm('Are you sure you want to delete this run? This action cannot be undone.')) {
-      return;
-    }
-    try {
-      await apiClient.deleteRun(runId);
-      addLog(`🗑️ Run deleted: ${runId}`, 'warning');
-      loadData();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete run';
-      addLog(`❌ Failed to delete run: ${message}`, 'error');
+      setError(err instanceof Error ? err.message : 'Unable to delete pipeline.');
     }
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <ArrowPathIcon className="w-8 h-8 animate-spin mx-auto mb-4 text-blue-600" />
-          <p className="text-gray-600">Loading pipeline...</p>
-        </div>
-      </div>
+      <AppShell eyebrow="Pipeline definition" title="Loading pipeline" description="Reading definition and execution history.">
+        <div className="panel grid min-h-80 place-items-center"><LoaderCircle className="size-7 animate-spin text-[var(--signal)]" /></div>
+      </AppShell>
     );
   }
 
-  if (error || !pipeline) {
+  if (!pipeline) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-6">
-            {error || 'Pipeline not found'}
-          </div>
-          <Link
-            href="/"
-            className="flex items-center gap-2 text-blue-600 hover:text-blue-700"
-          >
-            <ArrowLeftIcon className="w-4 h-4" />
-            Back to Dashboard
-          </Link>
-        </div>
-      </div>
+      <AppShell eyebrow="Pipeline definition" title="Pipeline unavailable" description="The requested definition could not be loaded.">
+        <div className="panel p-6 text-sm text-red-200">{error ?? 'Pipeline not found.'}</div>
+      </AppShell>
     );
   }
+
+  const failures = runs.filter((run) => run.status === 'failed').length;
+  const active = runs.filter((run) => run.status === 'running').length;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Header */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-4">
-              <Link
-                href="/"
-                className="flex items-center gap-2 text-blue-600 hover:text-blue-700"
-              >
-                <ArrowLeftIcon className="w-4 h-4" />
-                Back to Dashboard
-              </Link>
-              <ChevronRightIcon className="w-4 h-4 text-gray-400" />
-              <h1 className="text-2xl font-bold text-gray-900">{pipeline.name}</h1>
-            </div>
-            <StatusBadge status={pipeline.status} />
+    <AppShell
+      eyebrow={`Pipeline / ${pipeline.id.slice(0, 8)}`}
+      title={pipeline.name}
+      description={pipeline.description || 'Versioned pipeline definition and its complete execution history.'}
+      actions={
+        <>
+          <Link className="btn-secondary" href="/"><ArrowLeft className="size-4" />Operations</Link>
+          <button className="btn-primary" onClick={runPipeline}><Play className="size-4" />Run pipeline</button>
+          {active > 0 && <button className="btn-danger" onClick={cancelPipeline}><Square className="size-3.5" />Cancel active</button>}
+        </>
+      }
+    >
+      {error && <div className="mb-5 flex items-center gap-3 border border-[var(--amber)]/25 bg-[var(--amber)]/6 px-4 py-3 text-sm text-amber-100"><AlertTriangle className="size-4" />{error}</div>}
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Pipeline summary">
+        <Summary label="Current state"><StatusBadge status={pipeline.status} /></Summary>
+        <Summary label="Version" value={pipeline.version || 'unversioned'} detail={`created ${formatRelativeTime(pipeline.created_at)}`} />
+        <Summary label="Executions" value={String(runs.length)} detail={`${active} active · ${failures} failed`} />
+        <Summary label="Last run" value={pipeline.last_run_at ? formatRelativeTime(pipeline.last_run_at) : 'Never'} detail={pipeline.last_run_at ? new Date(pipeline.last_run_at).toLocaleDateString() : 'no execution data'} />
+      </section>
+
+      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(18rem,.8fr)]">
+        <section className="panel min-w-0">
+          <div className="panel-header">
+            <div className="flex items-center gap-2.5"><Code2 className="size-4 text-[var(--signal)]" /><h2 className="panel-title">Step blueprint</h2></div>
+            <span className="font-mono text-[10px] text-white/35">{pipeline.steps?.length ?? 0} STEPS</span>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div className="flex items-center gap-2 text-gray-600">
-              <DocumentTextIcon className="w-4 h-4" />
-              <span className="text-sm">Version: {pipeline.version}</span>
-            </div>
-            <div className="flex items-center gap-2 text-gray-600">
-              <CalendarIcon className="w-4 h-4" />
-              <span className="text-sm">Created: {formatRelativeTime(pipeline.created_at)}</span>
-            </div>
-            <div className="flex items-center gap-2 text-gray-600">
-              <ClockIcon className="w-4 h-4" />
-              <span className="text-sm">
-                Last run: {pipeline.last_run_at ? formatRelativeTime(pipeline.last_run_at) : 'Never'}
-              </span>
-            </div>
-          </div>
-
-          {pipeline.description && (
-            <p className="text-gray-700 mb-6">{pipeline.description}</p>
-          )}
-
-          {/* Action Buttons */}
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={runPipeline}
-              className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg"
-            >
-              <PlayIcon className="w-4 h-4" />
-              Run Pipeline
-            </button>
-            <button
-              onClick={cancelPipeline}
-              className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg"
-            >
-              <StopIcon className="w-4 h-4" />
-              Cancel All
-            </button>
-            <button
-              onClick={() => loadData()}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
-            >
-              <ArrowPathIcon className="w-4 h-4" />
-              Refresh
-            </button>
-            <button
-              onClick={deletePipeline}
-              className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
-            >
-              <TrashIcon className="w-4 h-4" />
-              Delete Pipeline
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-1 gap-6 mb-6">
-          {/* Pipeline Steps */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <button
-              onClick={() => setStepsExpanded(!stepsExpanded)}
-              className="w-full flex items-center gap-2 text-left hover:bg-gray-50 p-2 rounded -m-2 focus:outline-none"
-            >
-              <div className="flex-shrink-0">
-                {stepsExpanded ? (
-                  <ChevronUpIcon className="w-5 h-5 text-gray-400" />
-                ) : (
-                  <ChevronDownIcon className="w-5 h-5 text-gray-400" />
-                )}
-              </div>
-              <CogIcon className="w-5 h-5 text-gray-700" />
-              <h2 className="text-xl font-semibold text-gray-900">Pipeline Steps</h2>
-              <span className="text-sm text-gray-500">({pipeline.steps.length} steps)</span>
-            </button>
-            
-            {stepsExpanded && (
-              <>
-                {pipeline.steps.length === 0 ? (
-                  <p className="text-gray-700">No steps defined.</p>
-                ) : (
-                  <div className="space-y-4">
-                    {pipeline.steps.map((step, index) => (
-                      <div key={index} className="border-l-4 border-blue-500 pl-4 p-3 bg-gray-50 rounded">
-                        <h3 className="font-medium text-gray-900 mb-2">
-                          {index + 1}. {step.name}
-                        </h3>
-                        
-                        {step.description && (
-                          <p className="text-sm text-gray-600 mb-2">{step.description}</p>
-                        )}
-                        
-                        <div className="text-xs font-mono text-gray-900 bg-gray-100 p-2 rounded">
-                          {step.command}
-                        </div>
-                        
-                        <div className="text-xs text-gray-500 mt-2">
-                          Timeout: {step.timeout || 300}s
-                          {step.retry_count && ` • Retries: ${step.retry_count}`}
-                          {step.continue_on_error && ` • Continue on error`}
+          {!pipeline.steps?.length ? (
+            <Empty label="No steps in this definition" />
+          ) : (
+            <div className="p-4 sm:p-5">
+              {pipeline.steps.map((step, index) => (
+                <article key={`${step.name}-${index}`} className="relative grid grid-cols-[2.2rem_minmax(0,1fr)] gap-3">
+                  {index !== pipeline.steps.length - 1 && <span className="absolute bottom-0 left-[1.05rem] top-8 w-px bg-white/10" />}
+                  <span className="relative z-10 grid size-8 place-items-center border border-[var(--signal)]/18 bg-[var(--signal)]/6 font-mono text-[10px] text-[var(--signal)]">{String(index + 1).padStart(2, '0')}</span>
+                  <div className="mb-3 border border-white/9 bg-black/12 p-3.5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-medium text-white">{step.name}</h3>
+                        {step.description && <p className="mt-1 text-xs text-[var(--muted)]">{step.description}</p>}
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {step.depends_on && step.depends_on.length > 0 && (
+                            <span className="border border-[var(--cyan)]/25 bg-[var(--cyan)]/8 px-1.5 py-0.5 font-mono text-[9px] text-[var(--cyan)]">
+                              DAG depends on: {step.depends_on.join(', ')}
+                            </span>
+                          )}
+                          {step.artifacts && step.artifacts.length > 0 && (
+                            <span className="border border-white/15 bg-white/5 px-1.5 py-0.5 font-mono text-[9px] text-white/50">
+                              artifacts: {step.artifacts.join(', ')}
+                            </span>
+                          )}
                         </div>
                       </div>
-                    ))}
+                      <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-white/32">{step.timeout || 300}s · {step.retry_count ?? 0} retries</span>
+                    </div>
+                    <pre className="mt-3 overflow-x-auto border border-white/7 bg-[#080b0a] px-3 py-2.5 font-mono text-[11px] leading-5 text-white/58">{step.command}</pre>
                   </div>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Variables */}
-          {pipeline.variables && Object.keys(pipeline.variables).length > 0 && (
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <CogIcon className="w-5 h-5 text-gray-700" />
-                <h2 className="text-xl font-semibold text-gray-900">Variables</h2>
-                <span className="text-sm text-gray-500">({Object.keys(pipeline.variables).length} variables)</span>
-              </div>
-              
-              <div className="space-y-2">
-                {Object.entries(pipeline.variables).map(([key, value]) => (
-                  <div key={key} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                    <span className="font-mono text-sm text-gray-700">${key}</span>
-                    <span className="text-sm text-gray-900">{String(value)}</span>
-                  </div>
-                ))}
-              </div>
+                </article>
+              ))}
             </div>
           )}
-        </div>
+        </section>
 
-        {/* Pipeline Runs */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-gray-900">
-              🏃 Pipeline Runs ({runs.length})
-            </h2>
-            <button
-              onClick={loadData}
-              className="flex items-center gap-2 text-blue-600 hover:text-blue-700"
-            >
-              <ArrowPathIcon className="w-4 h-4" />
-              Refresh
-            </button>
-          </div>
-          
-          {runs.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-gray-700 mb-4">No runs found for this pipeline.</p>
-              <button
-                onClick={runPipeline}
-                className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg mx-auto"
-              >
-                <PlayIcon className="w-4 h-4" />
-                Start First Run
-              </button>
+        <aside className="space-y-6">
+          <section className="panel">
+            <div className="panel-header"><div className="flex items-center gap-2.5"><Braces className="size-4 text-[var(--cyan)]" /><h2 className="panel-title">Variables</h2></div></div>
+            {pipeline.variables && Object.keys(pipeline.variables).length ? (
+              <div>{Object.entries(pipeline.variables).map(([key, value]) => <div key={key} className="data-row grid-cols-[minmax(0,1fr)_auto]"><span className="truncate font-mono text-[10px] text-[var(--cyan)]">${key}</span><span className="max-w-40 truncate font-mono text-[10px] text-white/55">{String(value)}</span></div>)}</div>
+            ) : <Empty label="No pipeline variables" compact />}
+          </section>
+
+          <section className="panel p-4">
+            <p className="panel-title">Definition controls</p>
+            <div className="mt-4 grid gap-2">
+              <button className="btn-secondary w-full" onClick={loadData}><RefreshCw className="size-4" />Refresh snapshot</button>
+              <button className="btn-danger w-full" onClick={deletePipeline} disabled={active > 0}><Trash2 className="size-4" />Delete pipeline</button>
             </div>
-          ) : (
-            <>
-              <div className="space-y-4 mb-4">
-                {paginatedRuns.map((run) => (
-                  <div key={run.id} className="border-l-4 border-green-500 pl-4 p-4 bg-gray-50 rounded">
-                    <div className="flex items-center justify-between mb-2">
-                      <button
-                        onClick={() => router.push(`/run/${run.id}`)}
-                        className="font-medium text-gray-900 hover:text-blue-600 text-left"
-                      >
-                        {run.name}
-                      </button>
-                      <StatusBadge status={run.status} />
-                    </div>
-                    
-                    <div className="text-sm text-gray-600 space-y-1 mb-3">
-                      <p><strong>Run ID:</strong> {run.id}</p>
-                      <p><strong>Created:</strong> {formatDate(run.created_at)}</p>
-                      {run.started_at && (
-                        <p><strong>Started:</strong> {formatDate(run.started_at)}</p>
-                      )}
-                      {run.finished_at && (
-                        <p><strong>Finished:</strong> {formatDate(run.finished_at)}</p>
-                      )}
-                      {run.total_duration && (
-                        <p><strong>Duration:</strong> {formatDuration(run.total_duration)}</p>
-                      )}
-                    </div>
-                    
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        onClick={() => router.push(`/run/${run.id}`)}
-                        className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
-                      >
-                        👁️ View Details
-                      </button>
-                      {run.status === 'running' && (
-                        <button
-                          onClick={() => cancelRun(run.id)}
-                          className="text-xs bg-gray-600 hover:bg-gray-700 text-white px-2 py-1 rounded"
-                        >
-                          🛑 Cancel
-                        </button>
-                      )}
-                      <button
-                        onClick={() => deleteRun(run.id)}
-                        className="text-xs bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded"
-                      >
-                        🗑️ Delete
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              
-              <Pagination
-                currentPage={runsPage}
-                totalItems={runs.length}
-                itemsPerPage={ITEMS_PER_PAGE}
-                onPageChange={setRunsPage}
-              />
-            </>
-          )}
-        </div>
-
-        {/* Logs */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-gray-900">📝 Activity Logs</h2>
-            <button
-              onClick={clearLogs}
-              className="flex items-center gap-2 text-yellow-600 hover:text-yellow-700"
-            >
-              <TrashIcon className="w-4 h-4" />
-              Clear Logs
-            </button>
-          </div>
-          
-          <LogViewer logs={logs} />
-        </div>
+          </section>
+        </aside>
       </div>
-    </div>
+
+      <section className="panel mt-6 min-w-0">
+        <div className="panel-header">
+          <div className="flex items-center gap-2.5"><GitBranch className="size-4 text-[var(--cyan)]" /><h2 className="panel-title">Execution history</h2></div>
+          <span className="font-mono text-[10px] text-white/35">{runs.length} RUNS</span>
+        </div>
+        {runs.length === 0 ? (
+          <Empty label="No runs for this pipeline" action={<button className="btn-primary mt-4" onClick={runPipeline}><Play className="size-4" />Start first run</button>} />
+        ) : (
+          <div>
+            {runs.slice(0, 20).map((run) => (
+              <button key={run.id} className="data-row w-full grid-cols-[minmax(0,1fr)_auto_auto] text-left lg:grid-cols-[minmax(0,1fr)_8rem_8rem_auto]" onClick={() => router.push(`/run/${run.id}`)}>
+                <span className="min-w-0"><span className="block truncate text-sm font-medium text-white hover:text-[var(--signal)]">{run.name}</span><span className="mt-1 block font-mono text-[10px] text-white/35">{run.id.slice(0, 8)}</span></span>
+                <span className="hidden font-mono text-[10px] text-white/42 lg:block">{formatRelativeTime(run.created_at)}</span>
+                <span className="hidden font-mono text-[10px] text-white/42 lg:block">{run.total_duration != null ? formatDuration(run.total_duration) : '—'}</span>
+                <span className="flex items-center gap-3"><StatusBadge status={run.status} /><ArrowRight className="size-4 text-white/25" /></span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+    </AppShell>
   );
-} 
+}
+
+function Summary({ label, value, detail, children }: { label: string; value?: string; detail?: string; children?: React.ReactNode }) {
+  return <article className="metric"><p className="font-mono text-[10px] uppercase tracking-[0.16em] text-white/42">{label}</p><div className="mt-4 min-h-9">{children ?? <p className="text-2xl font-semibold tracking-[-0.03em] text-white">{value}</p>}</div>{detail && <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.09em] text-white/35">{detail}</p>}</article>;
+}
+
+function Empty({ label, compact = false, action }: { label: string; compact?: boolean; action?: React.ReactNode }) {
+  return <div className={`grid place-items-center p-6 text-center ${compact ? 'min-h-28' : 'min-h-48'}`}><div><Clock3 className="mx-auto size-6 text-white/20" /><p className="mt-3 text-sm text-[var(--muted)]">{label}</p>{action}</div></div>;
+}

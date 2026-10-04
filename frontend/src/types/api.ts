@@ -1,4 +1,4 @@
-export type PipelineStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled' | 'never_run';
+export type PipelineStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled' | 'skipped' | 'never_run';
 
 export interface PipelineStep {
   name: string;
@@ -7,6 +7,8 @@ export interface PipelineStep {
   timeout: number;
   retry_count?: number;
   continue_on_error?: boolean;
+  depends_on?: string[];
+  artifacts?: string[];
   status?: PipelineStatus;
   output?: string;
   error?: string;
@@ -15,11 +17,12 @@ export interface PipelineStep {
   ai_analysis?: AIAnalysis;
 }
 
-/** Jev analysis attached to a failed step by the backend. */
+/** Laya analysis attached to a failed step by the backend. */
 export interface AIAnalysis {
   classification: {
     kind: 'flaky' | 'build' | 'config' | 'infra' | 'code';
     retri: boolean;
+    retry?: boolean;
     retry_probability?: number | null;
     severity?: number | null;
     summary: string;
@@ -65,7 +68,7 @@ export interface CreatePipelineRequest {
   steps: PipelineStep[];
 }
 
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   data?: T;
   error?: string;
 }
@@ -86,7 +89,7 @@ export interface RunPipelineResponse {
   status: string;
 }
 
-// --- AI layer (Jev) ------------------------------------------------------------
+// --- AI layer (Laya) ------------------------------------------------------------
 
 export interface AIStatus {
   configured: boolean;
@@ -97,7 +100,7 @@ export interface AIStatus {
 export interface Decision {
   id: string;
   ts: number;
-  provider: 'jev' | 'heuristic';
+  provider: 'laya' | 'heuristic';
   latency_ms: number;
   context: { module: string; [key: string]: unknown };
   state: Record<string, unknown>;
@@ -131,3 +134,42 @@ export interface IssueRouteResult {
   severity: number;
   labels: string[];
 }
+
+export interface ArtifactInfo {
+  name: string;
+  step_name: string;
+  size: number;
+  path: string;
+}
+
+export interface FixSuggestion {
+  step_name: string;
+  cause: string;
+  hypothesis: string;
+  suggested_command: string;
+  can_auto_apply: boolean;
+  confidence: number;
+  provider: string;
+}
+
+export interface FeedbackPayload {
+  decision_id?: string;
+  rating: 'positive' | 'negative';
+  comment?: string;
+  user?: string;
+}
+
+export interface FeedbackEntry extends FeedbackPayload {
+  id: string;
+  ts: number;
+}
+
+export interface LogEvent {
+  run_id: string;
+  step_index: number;
+  step_name: string;
+  stream: 'stdout' | 'stderr' | 'system';
+  line: string;
+  timestamp: string;
+}
+

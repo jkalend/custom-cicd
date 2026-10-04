@@ -1,9 +1,10 @@
-// Package jev wraps the Vercel AI Gateway evaluate endpoint for the
-// typesafe-ai/jev decision model, with a deterministic offline fallback.
+// Package laya is the decision layer: it wraps the local Laya gateway (the
+// open-weights Laya decision models behind the /v1/evaluate dialect) with a
+// deterministic offline fallback.
 //
 // Wire protocol (POST {gateway}/v1/evaluate):
 //
-//	{"model":"typesafe-ai/jev", "state": {...}, "questions": {
+//	{"model":"convaiinnovations/laya", "state": {...}, "questions": {
 //	    "name": {"type":"boolean|choice|score", "instructions":"...",
 //	             "criteria": {...}|[...] }}}
 //
@@ -12,7 +13,7 @@
 //	boolean -> {"probability": 0..1}
 //	choice  -> {"choice": "key", "probabilities": {...}}
 //	score   -> {"score": 2.75, "probabilities": {...}}
-package jev
+package laya
 
 import (
 	"bytes"
@@ -21,7 +22,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -78,7 +81,7 @@ type Answer struct {
 	Score         *float64           `json:"score,omitempty"`
 	Probability   *float64           `json:"probability,omitempty"`
 	Probabilities map[string]float64 `json:"probabilities,omitempty"`
-	Provider      string             `json:"provider"` // "jev" | "heuristic"
+	Provider      string             `json:"provider"` // "laya" | "heuristic"
 }
 
 // request is the wire shape.
@@ -103,26 +106,27 @@ type Client struct {
 	HTTP       *http.Client
 	RecordFile string
 
-	mu sync.Mutex // guards record file appends
+	mu        sync.Mutex // guards record file appends and the health probe cache
+	lastProbe time.Time
+	probeOK   bool
 }
 
 // DefaultClient builds a client from environment and .env bootstrap.
 func DefaultClient() *Client {
 	bootstrapDotEnv()
-	gateway := envOr("JEV_GATEWAY_URL", "https://ai-gateway.vercel.sh/v1/evaluate")
-	record := envOr("JEV_RECORD_FILE", filepath.Join("data", "jev_decisions.jsonl"))
+	gateway := envOr("LAYA_GATEWAY_URL", "http://127.0.0.1:8128/v1/evaluate")
+	record := envOr("LAYA_RECORD_FILE", filepath.Join("data", "laya_decisions.jsonl"))
 	return &Client{
 		GatewayURL: gateway,
-		Model:      envOr("JEV_MODEL", "typesafe-ai/jev"),
-		APIKey:     firstEnv("AI_GATEWAY_API_KEY", "VERCEL_AI_GATEWAY_API_KEY", "TYPESAFE_API_KEY"),
+		Model:      envOr("LAYA_MODEL", "convaiinnovations/laya"),
+		APIKey:     envOr("LAYA_GATEWAY_TOKEN", ""),
 		HTTP:       &http.Client{Timeout: 10 * time.Second},
 		RecordFile: record,
 	}
 }
-
-// Evaluate asks `questions` against `state`. When no API key is configured
-// or the gateway fails, deterministic heuristic answers are returned so the
-// engine never blocks on AI availability.
+// Evaluate asks `questions` against `state`. When the gateway is unreachable
+// or fails, deterministic heuristic answers are returned so the engine never
+// blocks on AI availability.
 func (c *Client) Evaluate(state map[string]any, questions map[string]QuestionSpec, context map[string]any) (map[string]Answer, error) {
 	built := make(map[string]Question, len(questions))
 	for name, spec := range questions {
@@ -144,53 +148,91 @@ func (c *Client) Evaluate(state map[string]any, questions map[string]QuestionSpe
 }
 
 func (c *Client) callGateway(state map[string]any, questions map[string]Question) (map[string]Answer, string, error) {
-	if c.APIKey == "" {
-		return nil, "heuristic", fmt.Errorf("no api key configured")
-	}
+	// The local gateway needs no key; Authorization is only sent when one is
+	// configured (a token-gated deployment via LAYA_GATEWAY_TOKEN).
 	payload, err := json.Marshal(request{Model: c.Model, State: state, Questions: questions})
 	if err != nil {
-		return nil, "jev", err
+		return nil, "laya", err
 	}
 	req, err := http.NewRequest(http.MethodPost, c.GatewayURL, bytes.NewReader(payload))
 	if err != nil {
-		return nil, "jev", err
+		return nil, "laya", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
 
-	resp, err := c.HTTP.Do(req)
+	httpClient := c.HTTP
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, "jev", err
+		return nil, "laya", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, "jev", fmt.Errorf("gateway status %d", resp.StatusCode)
+		return nil, "laya", fmt.Errorf("gateway status %d", resp.StatusCode)
 	}
 	var body responseBody
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return nil, "jev", err
+		return nil, "laya", err
 	}
 	out := map[string]Answer{}
 	for name := range questions {
 		raw, ok := body.Answers[name]
+		// Local forwards can fail mid-load: a partial answer set is a whole-request
+		// fallback, never a mixed result.
 		if !ok {
-			return nil, "jev", fmt.Errorf("gateway missing answer %q", name)
+			return nil, "laya", fmt.Errorf("gateway missing answer %q", name)
 		}
 		var ans Answer
 		if err := json.Unmarshal(raw, &ans); err != nil {
-			return nil, "jev", fmt.Errorf("decode answer %s: %w", name, err)
+			return nil, "laya", fmt.Errorf("decode answer %s: %w", name, err)
 		}
 		ans.Type = questions[name].Type
-		ans.Provider = "jev"
+		ans.Provider = "laya"
 		out[name] = ans
 	}
-	return out, "jev", nil
+	return out, "laya", nil
 }
 
-// Configured reports whether a gateway key is present.
-func (c *Client) Configured() bool { return c.APIKey != "" }
+// Configured reports whether live evaluation is possible. The local gateway is
+// keyless, so this is a reachability probe (GET /health, 2s budget) rather than
+// a key check. Result is cached for a minute to keep the status endpoint cheap.
+func (c *Client) Configured() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ttl := 10 * time.Second
+	if c.probeOK {
+		ttl = time.Minute
+	}
+	if time.Since(c.lastProbe) < ttl && !c.lastProbe.IsZero() {
+		return c.probeOK
+	}
+	c.lastProbe = time.Now()
+	c.probeOK = false
 
-// Status describes the Jev layer configuration for the API.
+	health := strings.TrimSuffix(c.GatewayURL, "/v1/evaluate") + "/health"
+	probe, err := http.NewRequest(http.MethodGet, health, nil)
+	if err != nil {
+		return false
+	}
+	if c.APIKey != "" {
+		probe.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+	probeClient := &http.Client{Timeout: 2 * time.Second}
+	resp, err := probeClient.Do(probe)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	c.probeOK = resp.StatusCode == http.StatusOK
+	return c.probeOK
+}
+
+// Status describes the Laya layer configuration for the API.
 func (c *Client) Status() map[string]any {
 	return map[string]any{
 		"configured": c.Configured(),
@@ -244,11 +286,7 @@ func fnv1a(s string) uint32 {
 }
 
 func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
+	slices.Sort(s)
 }
 
 // --- decision recording ------------------------------------------------------
@@ -310,7 +348,66 @@ func (c *Client) ListDecisions(limit int) []map[string]any {
 	if limit <= 0 {
 		limit = 50
 	}
+	c.mu.Lock()
 	raw, err := os.ReadFile(c.RecordFile)
+	c.mu.Unlock()
+	if err != nil {
+		return []map[string]any{}
+	}
+	lines := bytes.Split(raw, []byte("\n"))
+	out := []map[string]any{}
+	for i := len(lines) - 1; i >= 0 && len(out) < limit; i-- {
+		line := bytes.TrimSpace(lines[i])
+		if len(line) == 0 {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal(line, &m); err == nil {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// SaveFeedback appends user feedback (rating, comment, decision_id) to laya_feedback.jsonl.
+func (c *Client) SaveFeedback(feedback map[string]any) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	feedbackFile := filepath.Join(filepath.Dir(c.RecordFile), "laya_feedback.jsonl")
+	_ = os.MkdirAll(filepath.Dir(feedbackFile), 0o755)
+
+	if _, ok := feedback["id"]; !ok {
+		feedback["id"] = strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	if _, ok := feedback["ts"]; !ok {
+		feedback["ts"] = float64(time.Now().UnixMilli()) / 1000
+	}
+
+	raw, err := json.Marshal(feedback)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(feedbackFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.Write(append(raw, '\n'))
+	return err
+}
+
+// ListFeedback reads the most recent user feedback entries (newest first).
+func (c *Client) ListFeedback(limit int) []map[string]any {
+	if limit <= 0 {
+		limit = 50
+	}
+	c.mu.Lock()
+	feedbackFile := filepath.Join(filepath.Dir(c.RecordFile), "laya_feedback.jsonl")
+	raw, err := os.ReadFile(feedbackFile)
+	c.mu.Unlock()
 	if err != nil {
 		return []map[string]any{}
 	}

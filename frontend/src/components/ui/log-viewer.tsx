@@ -33,7 +33,7 @@ export function LogViewer({
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
-    const isAtBottom = scrollHeight - scrollTop === clientHeight;
+    const isAtBottom = Math.abs(scrollHeight - scrollTop - clientHeight) <= 4;
     setIsUserScrolling(!isAtBottom);
   };
 
@@ -53,7 +53,7 @@ export function LogViewer({
   return (
     <div 
       className={cn(
-        'bg-black rounded-lg border border-gray-700 overflow-hidden',
+        'relative bg-black rounded-lg border border-gray-700 overflow-hidden',
         className
       )}
     >

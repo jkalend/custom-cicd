@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://127.0.0.1:8000';
 
-export async function POST(
-  request: NextRequest,
+export async function GET(
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const response = await fetch(`${BACKEND_URL}/pipelines/${id}/cancel`, {
-      method: 'POST',
+    const response = await fetch(`${BACKEND_URL}/runs/${id}/artifacts`, {
+      method: 'GET',
       headers: {
         'Content-Type': 'application/json',
       },
@@ -18,10 +18,10 @@ export async function POST(
     const data = await response.json();
     return NextResponse.json(data, { status: response.status });
   } catch (error) {
-    console.error('Failed to cancel pipeline:', error);
+    console.error('Failed to get artifacts:', error);
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Failed to reach backend' },
       { status: 502 }
     );
   }
-} 
+}

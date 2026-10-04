@@ -4,37 +4,46 @@
 package api
 
 import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/rs/cors"
 
-	"jev-cicd-backend/internal/engine"
-	"jev-cicd-backend/internal/jev"
+	"laya-cicd-backend/internal/engine"
+	"laya-cicd-backend/internal/laya"
 )
 
-// Server wires the engine and Jev analyzer to HTTP.
+// Server wires the engine and Laya analyzer to HTTP.
 type Server struct {
 	Engine   *engine.Engine
-	Jev      *jev.Client
-	Analyzer *jev.Analyzer
+	Laya     *laya.Client
+	Analyzer *laya.Analyzer
 }
 
 // NewServer builds the server and its dependencies.
 func NewServer(dataFile string) (*Server, error) {
-	client := jev.DefaultClient()
-	analyzer := jev.NewAnalyzer(client)
+	client := laya.DefaultClient()
+	analyzer := laya.NewAnalyzer(client)
 	eng, err := engine.New(dataFile, analyzer)
 	if err != nil {
 		return nil, err
 	}
-	return &Server{Engine: eng, Jev: client, Analyzer: analyzer}, nil
+	return &Server{Engine: eng, Laya: client, Analyzer: analyzer}, nil
 }
 
 // Handler returns the fully-wired HTTP handler with CORS.
@@ -69,11 +78,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /runs/{id}", s.handleGetRun)
 	mux.HandleFunc("DELETE /runs/{id}", s.handleDeleteRun)
 	mux.HandleFunc("POST /runs/{id}/cancel", s.handleCancelRun)
+	mux.HandleFunc("GET /runs/{id}/logs", s.handleRunLogs)
+	mux.HandleFunc("GET /runs/{id}/artifacts", s.handleListArtifacts)
+	mux.HandleFunc("GET /runs/{id}/artifacts/{step}/{name}", s.handleGetArtifactFile)
 
 	mux.HandleFunc("GET /api/runs", s.handleListRuns)
 	mux.HandleFunc("GET /api/runs/{id}", s.handleGetRun)
 	mux.HandleFunc("DELETE /api/runs/{id}", s.handleDeleteRun)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.handleCancelRun)
+	mux.HandleFunc("GET /api/runs/{id}/logs", s.handleRunLogs)
+	mux.HandleFunc("GET /api/runs/{id}/artifacts", s.handleListArtifacts)
+	mux.HandleFunc("GET /api/runs/{id}/artifacts/{step}/{name}", s.handleGetArtifactFile)
 
 	// AI layer
 	mux.HandleFunc("GET /ai/status", s.handleAIStatus)
@@ -81,6 +96,22 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /ai/triage", s.handleTriageLogs)
 	mux.HandleFunc("POST /ai/issue", s.handleRouteIssue)
 	mux.HandleFunc("GET /ai/notifications", s.handleListNotifications)
+	mux.HandleFunc("POST /ai/fix", s.handleSuggestFix)
+	mux.HandleFunc("POST /ai/feedback", s.handleSaveFeedback)
+	mux.HandleFunc("GET /ai/feedback", s.handleListFeedback)
+
+	mux.HandleFunc("GET /api/ai/status", s.handleAIStatus)
+	mux.HandleFunc("GET /api/ai/decisions", s.handleListDecisions)
+	mux.HandleFunc("POST /api/ai/triage", s.handleTriageLogs)
+	mux.HandleFunc("POST /api/ai/issue", s.handleRouteIssue)
+	mux.HandleFunc("GET /api/ai/notifications", s.handleListNotifications)
+	mux.HandleFunc("POST /api/ai/fix", s.handleSuggestFix)
+	mux.HandleFunc("POST /api/ai/feedback", s.handleSaveFeedback)
+	mux.HandleFunc("GET /api/ai/feedback", s.handleListFeedback)
+
+	// Webhooks
+	mux.HandleFunc("POST /webhooks/github", s.handleGitHubWebhook)
+	mux.HandleFunc("POST /api/webhooks/github", s.handleGitHubWebhook)
 
 	return cors.New(cors.Options{
 		AllowedOrigins: []string{"*"},
@@ -114,6 +145,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func readJSON(r *http.Request, target any) error {
+	defer r.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20))
 	if err != nil {
 		return err
@@ -156,9 +188,15 @@ func (s *Server) handleCreatePipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if def.Name == "" || len(def.Steps) == 0 {
+	if strings.TrimSpace(def.Name) == "" || len(def.Steps) == 0 {
 		writeError(w, http.StatusBadRequest, "name and steps are required")
 		return
+	}
+	for i, st := range def.Steps {
+		if strings.TrimSpace(st.Name) == "" || strings.TrimSpace(st.Command) == "" {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("step %d requires non-empty name and command", i+1))
+			return
+		}
 	}
 	id := s.Engine.CreatePipeline(def)
 	writeData(w, map[string]any{
@@ -219,9 +257,15 @@ func (s *Server) handleCreateAndRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if def.Name == "" || len(def.Steps) == 0 {
+	if strings.TrimSpace(def.Name) == "" || len(def.Steps) == 0 {
 		writeError(w, http.StatusBadRequest, "name and steps are required")
 		return
+	}
+	for i, st := range def.Steps {
+		if strings.TrimSpace(st.Name) == "" || strings.TrimSpace(st.Command) == "" {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("step %d requires non-empty name and command", i+1))
+			return
+		}
 	}
 	id := s.Engine.CreatePipeline(def)
 	runID, err := s.Engine.StartRun(id, true)
@@ -273,7 +317,7 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 // --- AI layer --------------------------------------------------------------------
 
 func (s *Server) handleAIStatus(w http.ResponseWriter, r *http.Request) {
-	writeData(w, s.Jev.Status())
+	writeData(w, s.Laya.Status())
 }
 
 func (s *Server) handleListDecisions(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +327,7 @@ func (s *Server) handleListDecisions(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	writeData(w, s.Jev.ListDecisions(limit))
+	writeData(w, s.Laya.ListDecisions(limit))
 }
 
 func (s *Server) handleTriageLogs(w http.ResponseWriter, r *http.Request) {
@@ -315,12 +359,239 @@ func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request)
 	writeData(w, s.Engine.ListNotifications())
 }
 
-// --- main plumbing ----------------------------------------------------------------
-func nowISO() string {
-	return strconv.FormatInt(time.Now().Unix(), 10)
+func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing run id")
+		return
+	}
+	_, found := s.Engine.GetRun(id)
+	if !found {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("run %s not found", id))
+		return
+	}
+
+	// JSON response when requested
+	if strings.Contains(r.Header.Get("Accept"), "application/json") && !strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		history, _, unsub := s.Engine.Logs().Subscribe(id)
+		unsub()
+		writeData(w, history)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+
+	history, ch, unsubscribe := s.Engine.Logs().Subscribe(id)
+	defer unsubscribe()
+
+	for _, ev := range history {
+		data, err := json.Marshal(ev)
+		if err == nil {
+			fmt.Fprintf(w, "data: %s\n\n", data)
+		}
+	}
+	flusher.Flush()
+
+	// If the run is already completed and no buffered events remain, close stream
+	run, _ := s.Engine.GetRun(id)
+	status, _ := run["status"].(string)
+	if status != string(engine.StatusRunning) && status != string(engine.StatusPending) && len(ch) == 0 {
+		return
+	}
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			fmt.Fprintf(w, ": ping\n\n")
+			flusher.Flush()
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(ev)
+			if err == nil {
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+			}
+			run, found := s.Engine.GetRun(id)
+			if found {
+				st, _ := run["status"].(string)
+				if st != string(engine.StatusRunning) && st != string(engine.StatusPending) && len(ch) == 0 {
+					return
+				}
+			}
+		}
+	}
 }
 
-// Run starts the HTTP server on PORT (default 8000).
+func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing run id")
+		return
+	}
+	artifacts, err := engine.ListRunArtifacts(s.Engine.ArtifactsDir(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeData(w, artifacts)
+}
+
+func (s *Server) handleGetArtifactFile(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("id")
+	step := r.PathValue("step")
+	name := r.PathValue("name")
+
+	if strings.Contains(runID, "..") || strings.Contains(step, "..") || strings.Contains(name, "..") ||
+		strings.ContainsAny(name, "/\\") {
+		writeError(w, http.StatusBadRequest, "invalid artifact path parameter")
+		return
+	}
+
+	targetDir := filepath.Join(s.Engine.ArtifactsDir(), runID, step)
+	filePath := filepath.Join(targetDir, name)
+
+	rel, err := filepath.Rel(s.Engine.ArtifactsDir(), filePath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		writeError(w, http.StatusNotFound, "artifact not found")
+		return
+	}
+
+	http.ServeFile(w, r, filePath)
+}
+
+func (s *Server) handleSuggestFix(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Pipeline string      `json:"pipeline"`
+		Step     engine.Step `json:"step"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid json: %s", err))
+		return
+	}
+	writeData(w, s.Analyzer.SuggestFix(req.Step, req.Pipeline))
+}
+
+func (s *Server) handleSaveFeedback(w http.ResponseWriter, r *http.Request) {
+	var body map[string]any
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid json: %s", err))
+		return
+	}
+	if err := s.Laya.SaveFeedback(body); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeData(w, map[string]any{"saved": true})
+}
+
+func (s *Server) handleListFeedback(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	writeData(w, s.Laya.ListFeedback(limit))
+}
+
+func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read body")
+		return
+	}
+
+	secret := os.Getenv("GITHUB_WEBHOOK_SECRET")
+	if secret != "" {
+		sig := r.Header.Get("X-Hub-Signature-256")
+		if sig == "" {
+			writeError(w, http.StatusUnauthorized, "missing signature")
+			return
+		}
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(body)
+		expectedMAC := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		if !hmac.Equal([]byte(sig), []byte(expectedMAC)) {
+			writeError(w, http.StatusUnauthorized, "invalid signature")
+			return
+		}
+	}
+
+	event := r.Header.Get("X-GitHub-Event")
+	if event == "ping" {
+		writeData(w, map[string]any{"pong": true})
+		return
+	}
+
+	var payload struct {
+		Ref        string `json:"ref"`
+		Repository struct {
+			Name string `json:"name"`
+		} `json:"repository"`
+	}
+	_ = json.Unmarshal(body, &payload)
+
+	pipelines := s.Engine.ListPipelines()
+	var targetPipelineID string
+	repoName := strings.ToLower(payload.Repository.Name)
+
+	for _, p := range pipelines {
+		name := strings.ToLower(fmt.Sprintf("%v", p["name"]))
+		if repoName != "" && strings.Contains(name, repoName) {
+			targetPipelineID = fmt.Sprintf("%v", p["id"])
+			break
+		}
+	}
+	if targetPipelineID == "" && len(pipelines) > 0 {
+		targetPipelineID = fmt.Sprintf("%v", pipelines[0]["id"])
+	}
+
+	if targetPipelineID == "" {
+		writeError(w, http.StatusNotFound, "no pipeline available to trigger")
+		return
+	}
+
+	runID, err := s.Engine.StartRun(targetPipelineID, true)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeData(w, map[string]any{
+		"event":       event,
+		"pipeline_id": targetPipelineID,
+		"run_id":      runID,
+		"triggered":   true,
+	})
+}
+
+// --- main plumbing ----------------------------------------------------------------
+func nowISO() string {
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
+// Run starts the HTTP server on PORT (default 8000) with graceful shutdown.
 func Run() {
 	dataFile := os.Getenv("DATA_FILE")
 	if dataFile == "" {
@@ -335,8 +606,27 @@ func Run() {
 		port = "8000"
 	}
 	addr := ":" + port
-	log.Printf("jev-cicd backend listening on %s (data: %s)", addr, dataFile)
-	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
-		log.Fatalf("server error: %v", err)
+	httpServer := &http.Server{
+		Addr:    addr,
+		Handler: srv.Handler(),
 	}
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		log.Printf("laya-cicd backend listening on %s (data: %s)", addr, dataFile)
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	<-stop
+	log.Println("Shutting down server gracefully...")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := httpServer.Shutdown(ctx); err != nil {
+		log.Printf("server forced to shutdown: %v", err)
+	}
+	log.Println("Server stopped")
 }

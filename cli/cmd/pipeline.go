@@ -203,6 +203,9 @@ var pipelineMonitorCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pipelineID := args[0]
 		interval, _ := cmd.Flags().GetInt("interval")
+		if interval <= 0 {
+			interval = 2
+		}
 
 		display.PrintInfo(fmt.Sprintf("Monitoring pipeline %s (Ctrl+C to stop)", pipelineID))
 

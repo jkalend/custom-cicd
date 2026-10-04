@@ -31,8 +31,10 @@ services:
     environment:
       - PORT=8000
       - DATA_FILE=/app/data/agent_data.json
-      - AI_GATEWAY_API_KEY=${AI_GATEWAY_API_KEY:-}
-      - JEV_GATEWAY_URL=${JEV_GATEWAY_URL:-https://ai-gateway.vercel.sh/v1/evaluate}
+      - LAYA_GATEWAY_URL=${LAYA_GATEWAY_URL:-http://host.docker.internal:8128/v1/evaluate}
+      - LAYA_GATEWAY_TOKEN=${LAYA_GATEWAY_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - backend_data:/app/data
     networks:

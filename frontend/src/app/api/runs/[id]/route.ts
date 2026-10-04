@@ -1,59 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const BACKEND_URL = process.env.BACKEND_URL || 'http://backend:8000';
+const BACKEND_URL = process.env.BACKEND_URL || 'http://127.0.0.1:8000';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const response = await fetch(`${BACKEND_URL}/runs/${params.id}`, {
+    const { id } = await params;
+    const response = await fetch(`${BACKEND_URL}/runs/${id}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
       },
     });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `Backend responded with status: ${response.status}`);
-    }
-
     const data = await response.json();
-    return NextResponse.json(data);
+    return NextResponse.json(data, { status: response.status });
   } catch (error) {
     console.error('Failed to get run:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to get run' },
-      { status: 500 }
+      { success: false, error: error instanceof Error ? error.message : 'Failed to reach backend' },
+      { status: 502 }
     );
   }
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const response = await fetch(`${BACKEND_URL}/runs/${params.id}`, {
+    const { id } = await params;
+    const response = await fetch(`${BACKEND_URL}/runs/${id}`, {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
       },
     });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `Backend responded with status: ${response.status}`);
-    }
-
     const data = await response.json();
-    return NextResponse.json(data);
+    return NextResponse.json(data, { status: response.status });
   } catch (error) {
     console.error('Failed to delete run:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to delete run' },
-      { status: 500 }
+      { success: false, error: error instanceof Error ? error.message : 'Failed to reach backend' },
+      { status: 502 }
     );
   }
 } 

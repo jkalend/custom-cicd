@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	"custom-cicd-cli/internal/client"
 	"custom-cicd-cli/internal/config"
@@ -49,8 +50,16 @@ Example usage:
 		// Create API client
 		apiClient = client.NewClient(cfg.APIURL)
 
-		// Test connection (but don't fail if it's not available)
-		if _, err := apiClient.HealthCheck(); err != nil {
+		// Skip connection probe for local offline commands and config management
+		isConfigCmd := cmd.Name() == "config" || (cmd.Parent() != nil && cmd.Parent().Name() == "config")
+		if cmd.Name() == "version" || cmd.Name() == "help" || isConfigCmd {
+			return nil
+		}
+
+		// Test connection with a short 2s timeout so an offline backend does not stall the CLI
+		probeClient := client.NewClient(cfg.APIURL)
+		probeClient.HTTPClient.Timeout = 2 * time.Second
+		if _, err := probeClient.HealthCheck(); err != nil {
 			display.PrintWarning(fmt.Sprintf("Could not connect to API at %s: %v", cfg.APIURL, err))
 			display.PrintInfo("Make sure the CI/CD backend is running")
 		}

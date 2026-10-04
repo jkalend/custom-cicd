@@ -133,7 +133,7 @@ func (c *Client) doRequest(method, endpoint string, body interface{}, response i
 
 	if resp.StatusCode >= 400 {
 		var errorResp ErrorResponse
-		if err := json.Unmarshal(respBody, &errorResp); err != nil {
+		if err := json.Unmarshal(respBody, &errorResp); err != nil || errorResp.Error == "" {
 			return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
 		}
 		return fmt.Errorf("API error: %s", errorResp.Error)
@@ -251,3 +251,20 @@ func (c *Client) DeleteRun(runID string) error {
 	endpoint := fmt.Sprintf("/api/runs/%s", runID)
 	return c.doRequest("DELETE", endpoint, nil, nil)
 }
+
+// Artifact represents an artifact captured during a run
+type Artifact struct {
+	Name     string `json:"name"`
+	StepName string `json:"step_name"`
+	Size     int64  `json:"size"`
+	Path     string `json:"path"`
+}
+
+// ListArtifacts gets artifacts captured for a specific run
+func (c *Client) ListArtifacts(runID string) ([]Artifact, error) {
+	var artifacts []Artifact
+	endpoint := fmt.Sprintf("/api/runs/%s/artifacts", runID)
+	err := c.doRequest("GET", endpoint, nil, &artifacts)
+	return artifacts, err
+}
+

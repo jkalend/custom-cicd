@@ -1,8 +1,8 @@
-# Jev CI/CD
+# Laya CI/CD
 
-A CI/CD pipeline system with an **AI decision layer**: every failure classification, log triage, issue routing, and notification filtering is a small, typed judgment made by [Jev](https://typesafe.ai) (TypeSafe AI's System One model, served via the Vercel AI Gateway) — composed into ordinary pipeline logic, never generating prose.
+A CI/CD pipeline system with an **AI decision layer**: every failure classification, log triage, issue routing, and notification filtering is a small, typed judgment made by [Laya](https://huggingface.co/convaiinnovations/laya) (Convai Innovation's open-weights System One decision model, Apache 2.0, served locally via the Laya gateway) — composed into ordinary pipeline logic, never generating prose.
 
-Forked from [`custom-cicd`](https://github.com/jkalend/custom-cicd) and re-architected: the Python/Flask backend is now **Go**, the existing Go CLI is unchanged in contract, and the Next.js/TypeScript frontend gained an AI dashboard. The original frontend also shipped without two files every page imported (`src/lib/api.ts`, `src/lib/utils.ts`) — a fresh clone couldn't build; they're restored here.
+A ground-up re-architecture of the original Python/Flask pipeline manager — that first version is preserved on the [`archive/pre-jev-cicd`](https://github.com/jkalend/custom-cicd/tree/archive/pre-jev-cicd) branch. The backend is now **Go** (pipeline engine plus a REST API wire-compatible with the original Flask contract), the Go CLI is unchanged in contract, and the Next.js/TypeScript frontend gained an AI dashboard. The original frontend also shipped without two files every page imported (`src/lib/api.ts`, `src/lib/utils.ts`) — a fresh clone couldn't build; they're restored here.
 
 ## Architecture
 
@@ -12,17 +12,18 @@ Forked from [`custom-cicd`](https://github.com/jkalend/custom-cicd) and re-archi
        frontend:3000   /api/* → backend:8000 (Go)
         Next.js/TS             engine ── executes shell steps
                               /    \
-                          jev client  persistence (JSON)
+                          laya client  persistence (JSON)
                               |
-                    Vercel AI Gateway ── typesafe-ai/jev
+                    Laya gateway (:8128) ── convaiinnovations/laya
+                    (local, self-hosted, keyless)
 ```
 
-- **backend/** — Go. Pipeline engine (runs, steps, retries, timeouts, cancellation), REST API (wire-compatible with the original Flask contract: wrapped `{data, success, error}`), Jev client with offline fallback, and the four decision modules.
+- **backend/** — Go. Pipeline engine (runs, steps, retries, timeouts, cancellation), REST API (wire-compatible with the original Flask contract: wrapped `{data, success, error}`), Laya client with offline fallback, and the four decision modules.
 - **frontend/** — Next.js/TS. Original dashboard plus the AI Decision Layer page: live decision log, notification feed, and playgrounds for log triage and issue routing.
 - **cli/** — Go (cobra). Unchanged contract: `cicd --api-url http://localhost:8000 pipeline list` etc.
 - **nginx.conf** — reverse proxy; `/api/*` → backend, everything else → frontend.
 
-## The Jev decision layer
+## The Laya decision layer
 
 Four modules, each a small set of typed questions (`boolean` / `choice` / `score`) asked in one batched request per event, with plain Go applying thresholds:
 
@@ -33,7 +34,7 @@ Four modules, each a small set of typed questions (`boolean` / `choice` / `score
 | `route_issue` | user routes an issue | is bug?, component, severity, regression? → labels |
 | `filter_notification` | a run finishes | level (ignore/defer/notify/urgent), interrupt now? |
 
-Principles: **Jev advises, Go decides** — e.g. a "page" only fires when both the action choice and the page-engineer boolean agree; urgency likewise needs two signals. Every decision is appended to `data/jev_decisions.jsonl` (provider, latency, state, questions, answers) and surfaced in the frontend. With no API key — or if the gateway is unreachable — a deterministic heuristic provider keeps everything working; the system never fails because the AI layer did.
+Principles: **Laya advises, Go decides** — e.g. a "page" only fires when both the action choice and the page-engineer boolean agree; urgency likewise needs two signals. Every decision is appended to `data/laya_decisions.jsonl` (provider, latency, state, questions, answers) and surfaced in the frontend. With the gateway unreachable — or during its checkpoint load — a deterministic heuristic provider keeps everything working; the system never fails because the AI layer did.
 
 ## Run it
 
@@ -58,7 +59,19 @@ cd cli && go build -o cicd .
 ./cicd --api-url http://localhost:8000 health
 ```
 
-Enable live Jev: copy `backend/.env.example` to `backend/.env`, set `AI_GATEWAY_API_KEY` (Vercel AI Gateway key; the account needs a credit card on file to serve requests), restart the backend. Without it you run in heuristic mode — everything still works, decisions are just deterministic placeholders.
+Enable live Laya: start the local Laya gateway (see below). The backend talks to `http://127.0.0.1:8128/v1/evaluate` by default; override with `LAYA_GATEWAY_URL`. No API key is needed. Without the gateway running you stay in heuristic mode — everything still works, decisions are just deterministic placeholders.
+
+### The Laya gateway (local sidecar)
+
+The decision models are PyTorch checkpoints, so they run in a small Python sidecar that speaks the same `/v1/evaluate` dialect the backend already uses. One-time setup:
+
+```bash
+python -m venv laya-venv
+laya-venv/Scripts/pip install laya        # or bin/pip on Unix
+laya-venv/Scripts/python laya_gateway.py  # :8128, checkpoints load in background
+```
+
+`laya_gateway.py` lives at the repo root. It downloads the English and multilingual checkpoints on first start (~1.4 GB), serves `/v1/evaluate` and `/health`, auto-routes per request, and pins ~1.5 GB of VRAM (or runs on CPU at ~200–500 ms per decision). Docker deployments reach it through `host.docker.internal:8128`.
 
 ## Using it
 

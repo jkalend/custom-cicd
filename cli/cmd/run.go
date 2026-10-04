@@ -103,6 +103,26 @@ var runDeleteCmd = &cobra.Command{
 	},
 }
 
+// runArtifactsCmd represents the run artifacts command
+var runArtifactsCmd = &cobra.Command{
+	Use:   "artifacts <run-id>",
+	Short: "List captured artifacts for a run",
+	Long:  `List all captured build and test artifacts for a specific pipeline run.`,
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		runID := args[0]
+
+		artifacts, err := apiClient.ListArtifacts(runID)
+		if err != nil {
+			display.PrintError(fmt.Sprintf("Failed to list artifacts: %v", err))
+			return err
+		}
+
+		display.PrintArtifacts(artifacts)
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(runCmd)
 
@@ -111,4 +131,6 @@ func init() {
 	runCmd.AddCommand(runStatusCmd)
 	runCmd.AddCommand(runCancelCmd)
 	runCmd.AddCommand(runDeleteCmd)
-} 
+	runCmd.AddCommand(runArtifactsCmd)
+}
+ 

@@ -1,13 +1,14 @@
-package jev
+package laya
 
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
-	"jev-cicd-backend/internal/engine"
+	"laya-cicd-backend/internal/engine"
 )
 
-// Analyzer implements engine.DecisionAnalyzer on top of the Jev client.
+// Analyzer implements engine.DecisionAnalyzer on top of the Laya client.
 type Analyzer struct {
 	Client *Client
 }
@@ -103,6 +104,7 @@ func (a *Analyzer) AnalyzeStepFailure(step engine.Step, runName string) json.Raw
 		"classification": map[string]any{
 			"kind":              kind,
 			"retri":             retri,
+			"retry":             retri,
 			"retry_probability": answers["retri"].Probability,
 			"severity":          answers["severity"].Score,
 			"summary":           summary,
@@ -148,7 +150,7 @@ func (a *Analyzer) TriageLogs(logText, source string) map[string]any {
 	if answers["page_engineer"].Probability != nil {
 		pageProb = *answers["page_engineer"].Probability
 	}
-	// Jev advises; Go decides. A page needs both signals agreeing.
+	// Laya advises; Go decides. A page needs both signals agreeing.
 	if pageProb < 0.5 && chosen == "page" {
 		chosen = "notify"
 	}
@@ -284,7 +286,7 @@ func (a *Analyzer) NotifyRunCompletion(run engine.PipelineRun) (string, float64)
 	if answers["urgent"].Probability != nil {
 		urgent = *answers["urgent"].Probability
 	}
-	// Jev advises; Go decides: urgency needs both signals.
+	// Laya advises; Go decides: urgency needs both signals.
 	if urgent < 0.5 && level == "urgent" {
 		level = "notify"
 	}
@@ -303,8 +305,142 @@ func joinStrings(parts []string, sep string) string {
 }
 
 func tailStr(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[len(s)-n:]
+	return string(runes[len(runes)-n:])
+}
+
+var fixCauses = map[string]string{
+	"missing_dependency": "Required module, package, binary, or CLI tool is not installed",
+	"syntax_error":       "Code syntax, compilation error, or invalid parameter syntax",
+	"test_failure":       "Test assertion failure or unmet test precondition",
+	"network_timeout":    "Remote repository, API, or package registry timeout/unreachable",
+	"permission_denied":  "Insufficient file permissions or unauthorized access",
+	"config_error":       "Missing or malformed environment variable or configuration file",
+}
+
+// SuggestFix analyzes a step failure and proposes a concrete diagnostic hypothesis and fix command.
+func (a *Analyzer) SuggestFix(step engine.Step, runName string) map[string]any {
+	combined := step.Error + "\n" + step.Output
+	lower := strings.ToLower(combined)
+
+	state := map[string]any{
+		"pipeline": runName,
+		"step":     step.Name,
+		"command":  step.Command,
+		"error":    tailStr(step.Error, 2000),
+		"output":   tailStr(step.Output, 2000),
+	}
+
+	questions := map[string]QuestionSpec{
+		"cause": {
+			Type:           "choice",
+			Instructions:   "What is the root cause of this failure?",
+			ChoiceCriteria: fixCauses,
+		},
+		"automated_fix": {
+			Type:         "boolean",
+			Instructions: "Can this problem be resolved by running a fixup command or installing dependencies?",
+		},
+		"confidence": {
+			Type:         "score",
+			Instructions: "How confident is this diagnosis?",
+			ScoreCriteria: []string{
+				"low: speculation based on generic exit status",
+				"medium: partial keywords match known issues",
+				"high: explicit error message identifies the exact fault",
+				"certain: unambiguous failure pattern",
+			},
+		},
+	}
+
+	answers, _ := a.Client.Evaluate(state, questions, map[string]any{
+		"module": "suggest_fix", "step": step.Name,
+	})
+
+	cause := ""
+	if ans, ok := answers["cause"]; ok {
+		cause = ans.Choice
+	}
+
+	// Deterministic heuristic overrides / enrichments
+	var hypothesis string
+	var suggestedCmd string
+	var canAutoApply bool
+
+	switch {
+	case strings.Contains(lower, "command not found") || strings.Contains(lower, "is not recognized as an internal or external command"):
+		cause = "missing_dependency"
+		hypothesis = "A required binary or tool executable is not found in PATH."
+		suggestedCmd = "# Verify tool installation and ensure it is available in system PATH"
+		canAutoApply = false
+
+	case strings.Contains(lower, "cannot find module") || strings.Contains(lower, "module_not_found"):
+		cause = "missing_dependency"
+		hypothesis = "Node.js dependencies are missing or package lockfile is out of date."
+		suggestedCmd = "npm install"
+		canAutoApply = true
+
+	case strings.Contains(lower, "no required module provides package") || strings.Contains(lower, "cannot find package"):
+		cause = "missing_dependency"
+		hypothesis = "Go dependencies are missing from go.mod/go.sum."
+		suggestedCmd = "go mod tidy && go mod download"
+		canAutoApply = true
+
+	case strings.Contains(lower, "permission denied") || strings.Contains(lower, "access is denied"):
+		cause = "permission_denied"
+		hypothesis = "Execution failed due to missing file write or executable permissions."
+		suggestedCmd = "chmod +x <target-file> # or grant process file permissions"
+		canAutoApply = false
+
+	case strings.Contains(lower, "econnrefused") || (strings.Contains(lower, "dial tcp") && strings.Contains(lower, "connect: connection refused")):
+		cause = "network_timeout"
+		hypothesis = "Target service or network endpoint is unreachable or not started."
+		suggestedCmd = "# Check that required backing services are running before step execution"
+		canAutoApply = false
+
+	case strings.Contains(lower, "fail:") || strings.Contains(lower, "test failed") || strings.Contains(lower, "failed tests:"):
+		cause = "test_failure"
+		hypothesis = "Unit or integration tests failed an assertion."
+		suggestedCmd = step.Command + " -v # Run failed test suite in verbose mode to inspect assertions"
+		canAutoApply = false
+
+	case strings.Contains(lower, "timed out") || strings.Contains(lower, "context deadline exceeded"):
+		cause = "network_timeout"
+		hypothesis = "Step exceeded its configured execution timeout."
+		suggestedCmd = fmt.Sprintf("# Increase step timeout (currently %ds) or optimize long-running step commands", step.Timeout)
+		canAutoApply = false
+
+	default:
+		if cause == "" {
+			cause = "unknown"
+			hypothesis = "Step failed with non-zero exit code. Review output logs for details."
+			suggestedCmd = step.Command
+		} else {
+			hypothesis = fmt.Sprintf("Diagnosis points to %s.", fixCauses[cause])
+			suggestedCmd = step.Command
+		}
+	}
+
+	confidenceScore := 1.0
+	if ans, ok := answers["confidence"]; ok && ans.Score != nil {
+		confidenceScore = *ans.Score
+	}
+
+	provider := "heuristic"
+	if ans, ok := answers["cause"]; ok && ans.Provider != "" {
+		provider = ans.Provider
+	}
+
+	return map[string]any{
+		"step_name":         step.Name,
+		"cause":             cause,
+		"hypothesis":        hypothesis,
+		"suggested_command": suggestedCmd,
+		"can_auto_apply":    canAutoApply,
+		"confidence":        confidenceScore,
+		"provider":          provider,
+	}
 }

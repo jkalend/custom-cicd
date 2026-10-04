@@ -193,4 +193,25 @@ func FormatDuration(seconds float64) string {
 		return fmt.Sprintf("%.1fm", duration.Minutes())
 	}
 	return fmt.Sprintf("%.1fh", duration.Hours())
-} 
+}
+
+// PrintArtifacts displays a list of captured artifacts for a run
+func PrintArtifacts(artifacts []client.Artifact) {
+	if len(artifacts) == 0 {
+		fmt.Println("📦 No artifacts found for this run")
+		return
+	}
+
+	fmt.Printf("\n📦 Found %d artifact(s):\n", len(artifacts))
+	fmt.Println(strings.Repeat("-", 60))
+
+	for _, art := range artifacts {
+		sizeKB := float64(art.Size) / 1024.0
+		fmt.Printf("📄 %s\n", art.Name)
+		fmt.Printf("\tStep: %s\n", art.StepName)
+		fmt.Printf("\tSize: %.1f KB (%d bytes)\n", sizeKB, art.Size)
+		fmt.Printf("\tPath: %s\n", art.Path)
+		fmt.Println()
+	}
+}
+

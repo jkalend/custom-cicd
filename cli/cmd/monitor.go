@@ -26,6 +26,9 @@ Example:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id := args[0]
 		interval, _ := cmd.Flags().GetInt("interval")
+		if interval <= 0 {
+			interval = 2
+		}
 
 		display.PrintInfo(fmt.Sprintf("Monitoring %s (Ctrl+C to stop)", id))
 
